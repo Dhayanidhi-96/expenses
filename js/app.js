@@ -3,12 +3,12 @@ import { createStore } from './store.js';
 import { parseAmount, formatINR, paiseToInput } from './money.js';
 import { KIND, MONEY_TYPE, MONEY_TYPES, PAID_FROM, newId, validateTransaction, parseBackup } from './model.js';
 import {
-  todayISO, periodFor, shiftPeriod, dashboard, filterTransactions, sortTransactions,
+  todayISO, periodFor, shiftPeriod, addDays, dashboard, filterTransactions, sortTransactions,
   summarize, rangeForPreset, inRange, paidFromFor, myBudgetTotal, daysBetween,
   buildAlerts, spendingPatterns, periodTrend,
 } from './calc.js';
 import { buildBackup, buildCsv, download, backupFilename } from './backup.js';
-import { RANGE_PRESETS, SCOPES, analyticsRange, analyze, budgetReview, categoryTrends, savingsHistory } from './analytics.js';
+import { RANGE_PRESETS, SCOPES, analyticsRange, analyze, budgetReview, categoryTrends, savingsHistory, moneySummary, categoryBudgetRows } from './analytics.js';
 
 // ---------------- State
 
@@ -16,7 +16,7 @@ const state = {
   data: { ready: false, user: null, settings: null, transactions: [] },
   periodOffset: 0,
   chartMode: 'running',
-  analytics: { preset: 'period', scope: 'me', from: '', to: '' },
+  analytics: { preset: 'period', scope: 'me', timeView: 'time', from: '', to: '' },
   editingId: null,
   saving: false,
   settingsDirty: false,
@@ -435,21 +435,18 @@ function renderAnalytics() {
     <section class="card">
       <div class="an-controls">
         <div><label for="an-range">Range</label><select id="an-range">${RANGE_PRESETS.map(([v, l]) => opt(v, l, a.preset)).join('')}</select></div>
-        <div><label for="an-scope">Money</label><select id="an-scope">${SCOPES.map(([v, l]) => opt(v, l, a.scope)).join('')}</select></div>
         <div data-custom ${a.preset === 'custom' ? '' : 'hidden'}><label for="an-from">From</label><input id="an-from" type="date" value="${esc(a.from)}"></div>
         <div data-custom ${a.preset === 'custom' ? '' : 'hidden'}><label for="an-to">To</label><input id="an-to" type="date" value="${esc(a.to)}"></div>
       </div>
     </section>
     <div id="an-body"></div>`;
-  const read = () => {
+  view.querySelector('.an-controls').addEventListener('change', () => {
     a.preset = $('#an-range').value;
-    a.scope = $('#an-scope').value;
     a.from = $('#an-from').value;
     a.to = $('#an-to').value;
     view.querySelectorAll('[data-custom]').forEach((el) => { el.hidden = a.preset !== 'custom'; });
     renderAnalyticsBody();
-  };
-  view.querySelector('.an-controls').addEventListener('change', read);
+  });
   renderAnalyticsBody();
 }
 
@@ -464,8 +461,6 @@ function renderAnalyticsBody() {
     el.innerHTML = '<div class="card empty">Pick a start and an end date (start before end).</div>';
     return;
   }
-  const r = analyze(state.data.transactions, s, range, today, a.scope);
-  const scopeLabel = SCOPES.find(([v]) => v === a.scope)[1];
   const rangeLabel = `${fmtDate(range.start)} ${range.start.slice(0, 4) !== range.end.slice(0, 4) ? range.start.slice(0, 4) : ''} – ${fmtDate(range.end)} ${range.end.slice(0, 4)}`;
 
   // Nothing at all in this range: say so plainly and point to where the entries are.
@@ -479,26 +474,37 @@ function renderAnalyticsBody() {
     return;
   }
 
+  const m = moneySummary(state.data.transactions, s, range, today);
+  const r = analyze(state.data.transactions, s, range, today, a.scope);
   el.innerHTML = `
-    <div class="dash-grid"><div class="dash-col">
-      ${summaryCard(r, rangeLabel, scopeLabel)}
-      ${whereCard(r)}
-      ${budgetReviewCard(budgetReview(state.data.transactions, s, today))}
-      ${trendsCard(categoryTrends(state.data.transactions, s, today, a.scope), scopeLabel)}
-    </div><div class="dash-col">
-      <section class="card chart" id="an-weekday"></section>
-      <section class="card" id="an-calendar"></section>
-      ${barListCard('Payment methods', r.paymentModes.map((m) => ({ name: m.mode, value: m.spent, sub: `${Math.round(m.share * 100)}%` })), 'No payments in this range.')}
-      <section class="card"><h3>Top 5 expenses</h3>${r.top.length ? `<ul class="list card-list flat">${r.top.map(txRow).join('')}</ul>` : '<p class="muted">No expenses in this range.</p>'}</section>
-      ${savingsCard(savingsHistory(state.data.transactions, s, today))}
-    </div></div>`;
+    ${summaryTiles(m, rangeLabel)}
+    ${salarySplitCard(m)}
+    <div class="dash-grid an-grid">
+      <div class="dash-col">${categoryTableCard(categoryBudgetRows(r, s, a.scope), a.scope)}</div>
+      <div class="dash-col"><section class="card chart" id="an-time"></section></div>
+    </div>
+    ${monthTableCard(savingsHistory(state.data.transactions, s, today))}
+    <details class="more-details">
+      <summary>More details <span class="muted small">budget suggestions · trends · calendar · payments · top 5</span></summary>
+      <div class="more-body">
+        ${budgetReviewCard(budgetReview(state.data.transactions, s, today))}
+        ${trendsCard(categoryTrends(state.data.transactions, s, today, a.scope), SCOPES.find(([v]) => v === a.scope)[1])}
+        <section class="card" id="an-calendar"></section>
+        ${barListCard('Payment methods', r.paymentModes.map((p) => ({ name: p.mode, value: p.spent, sub: `${Math.round(p.share * 100)}%` })), 'No payments in this range.')}
+        <section class="card"><h3>Top 5 expenses</h3>${r.top.length ? `<ul class="list card-list flat">${r.top.map(txRow).join('')}</ul>` : '<p class="muted">No expenses in this range.</p>'}</section>
+      </div>
+    </details>`;
 
+  el.querySelectorAll('[data-scope]').forEach((b) => b.addEventListener('click', () => {
+    a.scope = b.dataset.scope;
+    renderAnalyticsBody();
+  }));
   el.querySelectorAll('[data-see]').forEach((b) => b.addEventListener('click', () => {
     state.history = { preset: 'custom', from: range.start, to: range.end, q: '', kind: KIND.EXPENSE, category: b.dataset.see, paidBy: '', sort: 'date-desc' };
     navigate('history');
   }));
   bindTxList(el);
-  renderWeekdayChart(r);
+  renderTimeChart(r, m, range);
   renderCalendar(r);
 }
 
@@ -511,30 +517,192 @@ const changeText = (change, ratio) => {
     : `<span class="good">▼ ${money(-change)} less${pct}</span>`;
 };
 
-function summaryCard(r, rangeLabel, scopeLabel) {
+const kpi = (label, value, cls = '', note = '') =>
+  `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value ${cls}">${value}</div>${note ? `<div class="kpi-note">${note}</div>` : ''}</div>`;
+
+/** Excel-style boxes: Salary → Saved → Given to Home → My Money → My Spent → My Money Left. */
+function summaryTiles(m, rangeLabel) {
+  const compare = m.change === null ? ''
+    : `<p class="small kpi-compare">My spending: ${changeText(m.change, null)} than ${fmtDate(m.prevWindow.start)} – ${fmtDate(m.prevWindow.end)} ${m.prevWindow.end.slice(0, 4)}</p>`;
   return `
     <section class="card">
-      <div class="row between wrap"><h3>${rangeLabel}</h3><span class="tag">${scopeLabel}</span></div>
-      <div class="stats">
-        ${stat('Total spent', money(r.total))}
-        ${stat('Average / day', money(r.dailyAvg, true))}
-        ${stat('Entries', String(r.count))}
-        ${stat('Vs before', changeText(r.change, r.changeRatio))}
+      <div class="row between wrap"><h3>Money summary</h3><span class="muted small">${rangeLabel}</span></div>
+      <div class="kpis">
+        ${kpi('Salary', money(m.salary), '', 'Money in')}
+        ${kpi('Saved', money(m.saved), '', m.fromSavings ? `${formatINR(m.fromSavings)} taken back` : '')}
+        ${kpi('Given to Home', money(m.givenHome))}
+        ${kpi('My Money', money(m.myMoney), '', 'to spend')}
+        ${kpi('My Spent', money(m.mySpent))}
+        ${kpi('My Money Left', money(m.myLeft), m.myLeft < 0 ? 'bad' : 'good', m.myLeft < 0 ? 'overspent' : '')}
       </div>
-      ${r.prevHasData ? `<p class="muted small" style="margin:12px 0 0">Compared with ${fmtDate(r.prevWindow.start)} – ${fmtDate(r.prevWindow.end)} ${r.prevWindow.end.slice(0, 4)}${r.range.end > todayISO() ? ' (same number of days)' : ''}.</p>` : ''}
+      <div class="kpi-strip">
+        <span>Average / day <strong>${money(m.avgPerDay)}</strong></span>
+        <span>Daily limit <strong>${money(m.dailyLimit)}</strong></span>
+        <span>Home spent <strong>${money(m.homeSpent)}</strong></span>
+        <span>Home left <strong class="${m.homeLeft < 0 ? 'bad' : ''}">${money(m.homeLeft)}</strong></span>
+      </div>
+      ${compare}
     </section>`;
 }
 
-function whereCard(r) {
-  const max = r.categories[0]?.spent ?? 0;
-  const rows = r.categories.map((c) => `
-    <div class="hbar">
-      <div class="row between"><div><strong>${esc(c.name)}</strong> ${c.paidFrom === PAID_FROM.HOME ? '<span class="tag">Home</span>' : ''}</div><strong>${money(c.spent)}</strong></div>
-      <div class="track"><div class="fill" style="width:${max ? (c.spent / max) * 100 : 0}%"></div></div>
-      <div class="row between small"><span class="muted">${Math.round(c.share * 100)}% of spending${c.change === null ? '' : ` · ${changeText(c.change, null)}`}</span>
-        <button type="button" class="link-btn" data-see="${esc(c.name)}">Entries ›</button></div>
-    </div>`).join('');
-  return `<section class="card"><div class="row between"><h3>Where the money goes</h3><span class="muted small">${money(r.total)}</span></div>${rows || '<p class="muted">No spending in this range.</p>'}</section>`;
+/** One stacked bar: how the salary was split. Colour is backed by a text label on every part. */
+function salarySplitCard(m) {
+  const title = '<h3>Where your salary went</h3>';
+  if (m.salary <= 0) return `<section class="card">${title}<p class="muted small">Add your salary in Money In to see how it was split.</p></section>`;
+  const left = Math.max(0, m.myLeft);
+  const parts = [
+    { key: 's1', label: 'Saved', value: m.saved },
+    { key: 's2', label: 'Given to Home', value: m.givenHome },
+    { key: 's3', label: 'My spent', value: m.mySpent },
+    { key: 'left', label: 'Left', value: left },
+  ].filter((p) => p.value > 0);
+  const total = parts.reduce((t, p) => t + p.value, 0);
+  const pct = (v) => Math.round((v / total) * 100);
+  return `
+    <section class="card">
+      ${title}
+      <div class="split-bar" role="img" aria-label="${parts.map((p) => `${p.label} ${pct(p.value)}%`).join(', ')}">
+        ${parts.map((p) => `<div class="seg-${p.key}" style="flex:${p.value}" title="${p.label}: ${formatINR(p.value)}"></div>`).join('')}
+      </div>
+      <ul class="split-legend">
+        ${parts.map((p) => `<li><span class="key seg-${p.key}"></span>${p.label}<strong>${money(p.value)}</strong><span class="muted">${pct(p.value)}%</span></li>`).join('')}
+      </ul>
+      ${m.fromSavings ? `<p class="muted small" style="margin:8px 0 0">Includes ${formatINR(m.fromSavings)} taken back from savings.</p>` : ''}
+      ${m.myLeft < 0 ? `<p class="small bad" style="margin:8px 0 0">⛔ Overspent by ${money(-m.myLeft)} – more than your money for this range.</p>` : ''}
+    </section>`;
+}
+
+/** Excel-style category table: spent vs budget, biggest first; unused budgets folded away. */
+function categoryTableCard(rows, scope) {
+  const used = rows.filter((x) => !x.unused).sort((a, b) => b.spent - a.spent);
+  const unused = rows.filter((x) => x.unused);
+  const total = used.reduce((t, x) => t + x.spent, 0);
+  const row = (c) => {
+    const bar = c.budget ? Math.min(100, (c.spent / c.budget) * 100) : total ? (c.spent / total) * 100 : 0;
+    return `
+      <div class="cat">
+        <div class="row between wrap">
+          <div><strong>${esc(c.name)}</strong> ${c.paidFrom === PAID_FROM.HOME ? '<span class="tag">Home</span>' : ''}</div>
+          <div class="small">${c.budget ? STATUS[c.status](c) : `<strong>${money(c.spent)}</strong>`}</div>
+        </div>
+        <div class="track"><div class="fill ${c.budget ? c.status : ''}" style="width:${bar}%"></div></div>
+        <div class="row between small">
+          <span class="muted">${money(c.spent)}${c.budget ? ` of ${money(c.budget)}` : ''}${total && c.spent ? ` · ${Math.round((c.spent / total) * 100)}% of spending` : ''}</span>
+          ${c.spent ? `<button type="button" class="link-btn" data-see="${esc(c.name)}">Entries ›</button>` : ''}
+        </div>
+      </div>`;
+  };
+  return `
+    <section class="card">
+      <div class="row between wrap">
+        <h3>Spending by category</h3>
+        <div class="seg" role="group" aria-label="Which money">
+          ${SCOPES.map(([v, l]) => `<button type="button" data-scope="${v}" aria-pressed="${v === scope}">${l.replace(' money', '')}</button>`).join('')}
+        </div>
+      </div>
+      ${used.map(row).join('') || '<p class="muted">No spending in this range.</p>'}
+      ${unused.length ? `<details class="more"><summary>Show ${unused.length} unused categor${unused.length === 1 ? 'y' : 'ies'}</summary>${unused.map(row).join('')}</details>` : ''}
+    </section>`;
+}
+
+/** Period-by-period table, like the summary block of each Excel tab. */
+function monthTableCard(h) {
+  if (!h.rows.length) return '';
+  const t = h.rows.reduce((acc, x) => ({
+    received: acc.received + x.received, saved: acc.saved + x.saved, givenHome: acc.givenHome + x.givenHome,
+    mySpent: acc.mySpent + x.mySpent, myLeft: acc.myLeft + x.myLeft,
+  }), { received: 0, saved: 0, givenHome: 0, mySpent: 0, myLeft: 0 });
+  const cells = (x) => `<td class="num">${formatINR(x.received)}</td><td class="num">${formatINR(x.saved)}</td><td class="num">${formatINR(x.givenHome)}</td>
+    <td class="num">${formatINR(x.mySpent)}</td><td class="num ${x.myLeft < 0 ? 'bad' : ''}">${formatINR(x.myLeft)}</td>`;
+  return `
+    <section class="card">
+      <div class="row between wrap"><h3>Month by month</h3><span class="small">Total saved <strong>${money(h.allTimeSaved)}</strong></span></div>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Period</th><th>Salary</th><th>Saved</th><th>Home</th><th>Spent</th><th>Left</th></tr></thead>
+        <tbody>${h.rows.map((x) => `<tr><td>${fmtDate(x.period.start)}${x.current ? ' <span class="tag">now</span>' : ''}</td>${cells(x)}</tr>`).join('')}</tbody>
+        ${h.rows.length > 1 ? `<tfoot><tr><th>Total</th>${cells(t).replace(/<td/g, '<th').replace(/<\/td>/g, '</th>')}</tr></tfoot>` : ''}
+      </table></div>
+      <p class="muted small" style="margin:8px 0 0">Spent and Left are your own money. Current period: so far.</p>
+    </section>`;
+}
+
+/** "Spending over time" card: daily bars (short ranges) or one bar per period; or average by weekday. */
+function renderTimeChart(r, m, range) {
+  const el = $('#an-time');
+  fitChart(el);
+  const a = state.analytics;
+  const header = `
+    <div class="row between wrap">
+      <h3>Spending over time</h3>
+      <div class="seg" role="group" aria-label="Chart view">
+        <button type="button" data-tv="time" aria-pressed="${a.timeView === 'time'}">Over time</button>
+        <button type="button" data-tv="weekday" aria-pressed="${a.timeView === 'weekday'}">By weekday</button>
+      </div>
+    </div>`;
+  const bind = () => el.querySelectorAll('[data-tv]').forEach((b) => b.addEventListener('click', () => {
+    a.timeView = b.dataset.tv;
+    renderTimeChart(r, m, range);
+  }));
+  if (!r.total) {
+    el.innerHTML = `${header}<p class="muted">No spending in this range.</p>`;
+    bind();
+    return;
+  }
+  const scopeNote = SCOPES.find(([v]) => v === a.scope)[1].toLowerCase();
+  let svg, describe, summary, legend;
+
+  if (a.timeView === 'weekday') {
+    const days = r.weekday;
+    const g = chartGeometry(7, Math.max(...days.map((d) => d.avg ?? 0), 1));
+    const barW = Math.min(36, g.slot - 10);
+    const marks = days.map((d, i) => roundedBar(g.cx(i) - barW / 2, g.base, barW, g.base - g.y(d.avg ?? 0), i) + axisLabel('middle', g.cx(i), d.label)).join('');
+    const busiest = days.reduce((b, d) => ((d.avg ?? 0) > (b.avg ?? 0) ? d : b), days[0]);
+    svg = `<svg viewBox="0 0 ${CHART.W} ${CHART.H}" role="img" aria-label="Average spending per weekday; highest on ${busiest.label}">${marks}${g.hits}</svg>`;
+    legend = `<span class="key bar-key"></span>average per day (${scopeNote})`;
+    summary = `You spend most on <strong>${busiest.label}</strong> (average ${money(busiest.avg ?? 0)}). Tap a day for details.`;
+    describe = (i) => {
+      const d = days[i];
+      return d.count ? `${d.label}: average ${money(d.avg)} per day (${d.count} day${d.count === 1 ? '' : 's'}, total ${money(d.total)})` : `${d.label}: none in this range yet`;
+    };
+  } else if (r.calendar && daysBetween(range.start, range.end) < 62) {
+    // Whole range on the axis; days still to come show as empty.
+    const days = [...r.calendar];
+    for (let d = addDays(days.at(-1).date, 1); d <= range.end; d = addDays(d, 1)) days.push({ date: d, spent: 0 });
+    const limit = a.scope === 'me' && range.periods === 1 ? m.dailyLimit : 0;
+    const g = chartGeometry(days.length, Math.max(limit, ...days.map((d) => d.spent), 1));
+    const barW = Math.max(2, g.slot - 2);
+    const bars = days.map((d, i) => roundedBar(g.x(i) + (g.slot - barW) / 2, g.base, barW, g.base - g.y(d.spent), i)).join('');
+    const ly = g.y(limit);
+    const line = limit > 0 ? `<line class="limit" x1="${CHART.left}" x2="${CHART.W - CHART.right}" y1="${ly}" y2="${ly}"/>` : '';
+    svg = `<svg viewBox="0 0 ${CHART.W} ${CHART.H}" role="img" aria-label="Spending per day">${line}${bars}${dayLabels(days, g)}${g.hits}</svg>`;
+    legend = `<span class="key bar-key"></span>spent that day (${scopeNote})${limit ? ' <span class="key plan-key"></span>daily limit' : ''}`;
+    const top = days.reduce((b, d) => (d.spent > b.spent ? d : b), days[0]);
+    summary = `Biggest day: <strong>${fmtDate(top.date, true)}</strong> (${money(top.spent)}). Tap a day for details.`;
+    describe = (i) => `${fmtDate(days[i].date, true)}: spent ${money(days[i].spent)}${limit && days[i].spent > limit ? ' · <span class="warn">⚠ above daily limit</span>' : ''}`;
+  } else {
+    const s = settings();
+    const periods = [];
+    for (let p = periodFor(range.start, s.periodStartDay); p.start <= range.end; p = shiftPeriod(p, 1, s.periodStartDay)) periods.push(p);
+    const rows = periods.map((p) => ({ period: p, ...moneySummary(state.data.transactions, s, p, todayISO()) }));
+    const g = chartGeometry(rows.length, Math.max(...rows.map((x) => Math.max(x.myMoney, x.mySpent)), 1));
+    const barW = Math.min(40, g.slot - 8);
+    const marks = rows.map((x, i) => {
+      const bx = g.cx(i) - barW / 2;
+      const tick = x.myMoney > 0 ? `<line class="money-tick" x1="${bx - 3}" x2="${bx + barW + 3}" y1="${g.y(x.myMoney)}" y2="${g.y(x.myMoney)}"/>` : '';
+      return roundedBar(bx, g.base, barW, g.base - g.y(x.mySpent), i) + tick + axisLabel('middle', g.cx(i), monthFmt.format(new Date(x.period.start + 'T00:00:00Z')));
+    }).join('');
+    svg = `<svg viewBox="0 0 ${CHART.W} ${CHART.H}" role="img" aria-label="My spending per period compared with my money">${marks}${g.hits}</svg>`;
+    legend = '<span class="key bar-key"></span>my spending <span class="key tick-key"></span>my money';
+    summary = 'One bar per period. Tap a bar for details.';
+    describe = (i) => {
+      const x = rows[i];
+      return `${fmtDate(x.period.start)} – ${fmtDate(x.period.end)}: spent ${money(x.mySpent)} of ${money(x.myMoney)}`
+        + (x.myLeft >= 0 ? ` · <span class="good">${money(x.myLeft)} left</span>` : ` · <span class="warn">${money(-x.myLeft)} over</span>`);
+    };
+  }
+  el.innerHTML = `${header}<p class="muted small legend">${legend}</p><p class="small readout" aria-live="polite"></p>${svg}`;
+  bind();
+  bindHover(el, describe, summary);
 }
 
 const SUGGESTION = {
@@ -600,45 +768,6 @@ function barListCard(title, items, empty) {
       <div class="track"><div class="fill" style="width:${max ? (x.value / max) * 100 : 0}%"></div></div>
     </div>`).join('');
   return `<section class="card"><h3>${title}</h3>${rows || `<p class="muted">${empty}</p>`}</section>`;
-}
-
-function savingsCard(h) {
-  const rows = h.rows.map((x) => `
-    <tr><td>${fmtDate(x.period.start)}${x.current ? ' <span class="tag">now</span>' : ''}</td>
-      <td class="num">${formatINR(x.received)}</td><td class="num">${formatINR(x.netSaved)}</td>
-      <td class="num ${x.myLeft < 0 ? 'bad' : ''}">${formatINR(x.myLeft)}</td></tr>`).join('');
-  return `
-    <section class="card">
-      <div class="row between"><h3>Savings tracker</h3><span class="small">Total saved <strong>${money(h.allTimeSaved)}</strong></span></div>
-      ${rows ? `<div class="table-wrap"><table class="table">
-        <thead><tr><th>Period</th><th>Money in</th><th>Saved</th><th>My money left</th></tr></thead>
-        <tbody>${rows}</tbody></table></div>
-        <p class="muted small" style="margin:8px 0 0">Saved = put aside minus taken back. My money left = what was not spent (current period: so far).</p>`
-      : '<p class="muted">Add Money In entries to track savings.</p>'}
-    </section>`;
-}
-
-function renderWeekdayChart(r) {
-  const el = $('#an-weekday');
-  fitChart(el);
-  const days = r.weekday;
-  const title = '<h3>Spending by weekday</h3>';
-  if (!r.total) {
-    el.innerHTML = `${title}<p class="muted">No spending in this range.</p>`;
-    return;
-  }
-  const max = Math.max(...days.map((d) => d.avg ?? 0), 1);
-  const g = chartGeometry(7, max);
-  const barW = Math.min(36, g.slot - 10);
-  const marks = days.map((d, i) => roundedBar(g.cx(i) - barW / 2, g.base, barW, g.base - g.y(d.avg ?? 0), i) + axisLabel('middle', g.cx(i), d.label)).join('');
-  const busiest = days.reduce((b, d) => ((d.avg ?? 0) > (b.avg ?? 0) ? d : b), days[0]);
-  el.innerHTML = `${title}
-    <p class="small readout" aria-live="polite"></p>
-    <svg viewBox="0 0 ${CHART.W} ${CHART.H}" role="img" aria-label="Average spending per weekday; highest on ${busiest.label}">${marks}${g.hits}</svg>`;
-  bindHover(el, (i) => {
-    const d = days[i];
-    return d.count ? `${d.label}: average ${money(d.avg)} per day (${d.count} day${d.count === 1 ? '' : 's'}, total ${money(d.total)})` : `${d.label}: no ${d.label} in this range yet`;
-  }, `You spend most on <strong>${busiest.label}</strong> (average ${money(busiest.avg ?? 0)}). Tap a day for details.`);
 }
 
 function renderCalendar(r) {

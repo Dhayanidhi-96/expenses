@@ -1,6 +1,6 @@
 // Offline app shell. Serves cached files instantly and refreshes them in the background.
 // Firebase traffic is not intercepted (Firestore has its own offline cache).
-const CACHE = 'expense-tracker-v10';
+const CACHE = 'expense-tracker-v11';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest', 'icon.svg',
   'js/app.js', 'js/store.js', 'js/model.js', 'js/money.js', 'js/calc.js', 'js/analytics.js', 'js/backup.js', 'js/firebase-config.js',
