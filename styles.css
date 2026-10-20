@@ -347,3 +347,23 @@ button:focus-visible, a:focus-visible, .chip:focus-within span, summary:focus-vi
   .table { font-size: 0.76rem; }
   .table th, .table td { padding: 7px 3px; }
 }
+
+/* ---------- Dashboard & Analytics v2 ---------- */
+.stats-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 1100px) { .stats-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.hero-foot { margin: 12px 0 0; }
+.chip-status { font-size: 0.78rem; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); }
+.chip-status.good { color: var(--good); background: var(--good-soft); border-color: transparent; }
+.chip-status.warn { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+.kpis.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sub-title { margin: 16px 0 0; font-size: 0.85rem; font-weight: 600; color: var(--text-2); }
+.chart .forecast { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 2 4; stroke-linecap: round; opacity: 0.8; }
+.key.forecast-key { border-top: 2px dotted var(--accent); }
+.mini-track { height: 4px; background: var(--track); border-radius: 2px; overflow: hidden; margin-top: 4px; max-width: 160px; }
+.mini-track .fill { border-radius: 2px; }
+.table.habits td:first-child { white-space: normal; min-width: 110px; }
+/* Dashboard on phones: one column in a chosen order (main card, today & week, alerts, chart, categories, home). */
+@media (max-width: 1099px) {
+  .dash-grid.reorder > .dash-col { display: contents; }
+  .dash-grid.reorder .dash-col > * { margin-top: 0 !important; }
+}

@@ -256,3 +256,24 @@ export function categoryBudgetRows(analysis, settings, scope) {
     };
   });
 }
+
+/** How often and how much per category: [{ name, count, avg, total }], most frequent first. */
+export function categoryFrequency(transactions, settings, range, scope) {
+  const byName = new Map();
+  for (const tx of transactions) {
+    if (!inScope(tx, scope, settings) || !inRange(tx.date, range)) continue;
+    const row = byName.get(tx.category) ?? { name: tx.category, count: 0, total: 0 };
+    row.count++;
+    row.total += tx.amountPaise;
+    byName.set(tx.category, row);
+  }
+  return [...byName.values()].map((r) => ({ ...r, avg: r.total / r.count })).sort((a, b) => b.count - a.count || b.total - a.total);
+}
+
+/** Home-money spending per category (biggest first), plus how much of it came from categories normally paid by me. */
+export function homeBreakdown(transactions, settings, range) {
+  const rows = categoryFrequency(transactions, settings, range, 'home').sort((a, b) => b.total - a.total);
+  const switched = sum(transactions.filter((tx) => inScope(tx, 'home', settings) && inRange(tx.date, range)
+    && paidFromFor(tx.category, settings) === PAID_FROM.ME));
+  return { rows, switched };
+}

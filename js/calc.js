@@ -318,3 +318,38 @@ export function periodTrend(transactions, settings, today, count = 6) {
   }
   return rows;
 }
+
+// ---- At-a-glance helpers for the Dashboard (built on dashboard() output; no new money rules)
+
+/** Spent minus plan (daily limit × days so far) up to today; null outside the period or without a plan. */
+export function planGap(d, today) {
+  if (!inRange(today, d.period) || d.dailyLimit <= 0) return null;
+  const i = daysBetween(d.period.start, today);
+  return d.daily[i].running - d.dailyLimit * (i + 1);
+}
+
+/** Today and this week (Monday–Sunday, clipped to the period, up to today) for my money. */
+export function weekGlance(d, today) {
+  const week = weekFor(today);
+  const start = week.start > d.period.start ? week.start : d.period.start;
+  const end = today < d.period.end ? today : d.period.end;
+  const days = d.daily.filter((x) => x.date >= start && x.date <= end);
+  return {
+    todaySpent: d.spentToday,
+    weekSpent: days.reduce((t, x) => t + x.spent, 0),
+    daysIn: days.length,
+    weekPlan: d.dailyLimit * days.length,
+  };
+}
+
+/** Days in a row, ending today, where my spending stayed within the daily limit. */
+export function underLimitStreak(daily, today, limit) {
+  if (!(limit > 0)) return 0;
+  let n = 0;
+  for (let i = daily.length - 1; i >= 0; i--) {
+    if (daily[i].date > today) continue;
+    if (daily[i].spent > limit) break;
+    n++;
+  }
+  return n;
+}
