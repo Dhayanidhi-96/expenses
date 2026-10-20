@@ -1,6 +1,6 @@
 // Pure calculations for the Analytics tab. Builds on calc.js so numbers match the Dashboard.
 import { KIND, PAID_FROM, MONEY_TYPE } from './model.js';
-import { periodFor, shiftPeriod, addDays, daysBetween, inRange, paidFromFor, dashboard, budgetStatus, PACE_MIN_DAYS } from './calc.js';
+import { periodFor, shiftPeriod, addDays, daysBetween, inRange, paidFromFor, txPaidFrom, dashboard, budgetStatus, PACE_MIN_DAYS } from './calc.js';
 
 export const RANGE_PRESETS = [
   ['period', 'This period'], ['last-period', 'Last period'], ['3p', 'Last 3 periods'],
@@ -57,7 +57,7 @@ function comparisonWindow(transactions, range, today, startDay) {
 export function inScope(tx, scope, settings) {
   if (tx.kind !== KIND.EXPENSE) return false;
   if (scope === 'all') return true;
-  const mine = paidFromFor(tx.category, settings) === PAID_FROM.ME;
+  const mine = txPaidFrom(tx, settings) === PAID_FROM.ME;
   return scope === 'me' ? mine : !mine;
 }
 

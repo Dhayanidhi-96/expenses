@@ -1,5 +1,5 @@
 import { paiseToInput } from './money.js';
-import { paidFromFor, sortTransactions, todayISO } from './calc.js';
+import { txPaidFrom, sortTransactions, todayISO } from './calc.js';
 import { KIND } from './model.js';
 
 export function buildBackup({ settings, transactions }) {
@@ -23,7 +23,7 @@ export function buildCsv({ settings, transactions }) {
       isExpense ? tx.category : tx.type,
       paiseToInput(tx.amountPaise),
       tx.paidBy ?? '',
-      isExpense ? paidFromFor(tx.category, settings) : '',
+      isExpense ? txPaidFrom(tx, settings) : '',
       tx.note,
     ];
   });

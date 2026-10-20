@@ -4,7 +4,7 @@ import { parseAmount, formatINR, paiseToInput } from './money.js';
 import { KIND, MONEY_TYPE, MONEY_TYPES, PAID_FROM, newId, validateTransaction, parseBackup } from './model.js';
 import {
   todayISO, periodFor, shiftPeriod, addDays, dashboard, filterTransactions, sortTransactions,
-  summarize, rangeForPreset, inRange, paidFromFor, myBudgetTotal, daysBetween,
+  summarize, rangeForPreset, inRange, paidFromFor, txPaidFrom, myBudgetTotal, daysBetween,
   buildAlerts, spendingPatterns, periodTrend,
 } from './calc.js';
 import { buildBackup, buildCsv, download, backupFilename } from './backup.js';
@@ -822,6 +822,7 @@ function renderEntryView(kind) {
   const s = settings();
   const lastPaidBy = prefs.get('paidBy');
   const paidBy = tx?.paidBy ?? (s.payModes.includes(lastPaidBy) ? lastPaidBy : s.payModes[0]);
+  const paidFrom = tx?.kind === KIND.EXPENSE ? txPaidFrom(tx, s) : PAID_FROM.ME;
   const chips = (name, options, selected) => options.map((o) => `
     <label class="chip"><input type="radio" name="${name}" value="${esc(o)}" ${o === selected ? 'checked' : ''}><span>${esc(o)}</span></label>`).join('');
 
@@ -847,7 +848,9 @@ function renderEntryView(kind) {
           <div class="row"><button type="button" class="btn block" data-action="new-cat-cancel">Cancel</button><button type="button" class="btn primary block" data-action="new-cat-save">Add category</button></div>
         </div>
         <fieldset class="chips"><legend>Paid by</legend>${chips('paidBy', s.payModes, paidBy)}</fieldset>
-        <div class="field-error" data-error="paidBy"></div>`
+        <div class="field-error" data-error="paidBy"></div>
+        <fieldset class="chips"><legend>Paid from</legend>${chips('paidFrom', [PAID_FROM.ME, PAID_FROM.HOME], paidFrom)}</fieldset>
+        <div class="field-error" data-error="paidFrom"></div>`
       : `
         <fieldset class="chips"><legend>Type</legend>${chips('type', MONEY_TYPES, tx?.type ?? MONEY_TYPE.IN)}</fieldset>
         <p class="muted small">Money In = salary/cash received · Saved = put aside · Given to Home = money for home expenses · Taken from Savings = money moved back from savings to spend.</p>
@@ -877,7 +880,13 @@ function renderEntryView(kind) {
   form.addEventListener('submit', (e) => { e.preventDefault(); submitEntry(form, kind, tx); });
   form.querySelector('[data-action="cancel"]')?.addEventListener('click', () => navigate('history'));
   form.querySelector('[data-action="delete"]')?.addEventListener('click', () => deleteEntry(tx));
-  if (isExpense) bindNewCategory(form);
+  if (isExpense) {
+    bindNewCategory(form);
+    // Picking a category pre-selects its usual pot; the user can still switch it.
+    form.addEventListener('change', (e) => {
+      if (e.target.name === 'category') selectPaidFrom(form, paidFromFor(e.target.value, settings()));
+    });
+  }
   refreshRecent(kind);
   if (!tx && matchMedia('(min-width: 720px)').matches) $('#amount').focus();
 }
@@ -915,6 +924,7 @@ function bindNewCategory(form) {
       toggle.insertAdjacentHTML('beforebegin',
         `<label class="chip"><input type="radio" name="category" value="${esc(name)}" checked><span>${esc(name)}</span></label>`);
       form.querySelector('[data-error="category"]').textContent = '';
+      selectPaidFrom(form, category.paidFrom);
       setOpen(false);
       toast(`Category "${name}" added`);
     } catch (e) {
@@ -935,6 +945,11 @@ function bindNewCategory(form) {
   });
 }
 
+function selectPaidFrom(form, pot) {
+  const radio = [...form.querySelectorAll('input[name="paidFrom"]')].find((r) => r.value === pot);
+  if (radio) radio.checked = true;
+}
+
 async function submitEntry(form, kind, existing) {
   if (state.saving) return;
   form.querySelectorAll('[data-error]').forEach((el) => { el.textContent = ''; });
@@ -948,7 +963,7 @@ async function submitEntry(form, kind, existing) {
     note: fd.get('note'),
     createdAt: existing?.createdAt ?? Date.now(),
     updatedAt: Date.now(),
-    ...(kind === KIND.EXPENSE ? { category: fd.get('category') ?? '', paidBy: fd.get('paidBy') ?? '' } : { type: fd.get('type') }),
+    ...(kind === KIND.EXPENSE ? { category: fd.get('category') ?? '', paidBy: fd.get('paidBy') ?? '', paidFrom: fd.get('paidFrom') ?? PAID_FROM.ME } : { type: fd.get('type') }),
   };
   const result = validateTransaction(draft);
   if (!amount.ok) result.errors.amount = amount.error;
@@ -1025,7 +1040,7 @@ function txRow(tx) {
   const isIncome = tx.type === MONEY_TYPE.IN; // Saved / Given to Home are allocations, not income
   const s = settings();
   const sub = isExpense
-    ? [tx.paidBy, paidFromFor(tx.category, s) === PAID_FROM.HOME ? 'Home money' : '', tx.note].filter(Boolean).join(' · ')
+    ? [tx.paidBy, txPaidFrom(tx, s) === PAID_FROM.HOME ? 'Home money' : '', tx.note].filter(Boolean).join(' · ')
     : tx.note;
   return `<li><button type="button" class="tx" data-id="${esc(tx.id)}" aria-label="Edit ${esc(isExpense ? tx.category : tx.type)} ${formatINR(tx.amountPaise)}">
     <span class="avatar ${isIncome ? 'in' : ''}" aria-hidden="true">${esc(initials(isExpense ? tx.category : tx.type))}</span>

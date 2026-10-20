@@ -67,6 +67,10 @@ export function validateTransaction(tx) {
     value.paidBy = cleanText(tx.paidBy);
     if (!value.category) errors.category = 'Pick a category';
     if (!value.paidBy) errors.paidBy = 'Pick how you paid';
+    if (tx.paidFrom !== undefined && tx.paidFrom !== null) {
+      if (tx.paidFrom === PAID_FROM.ME || tx.paidFrom === PAID_FROM.HOME) value.paidFrom = tx.paidFrom;
+      else errors.paidFrom = 'Pick Me or Home money';
+    }
   } else if (tx.kind === KIND.MONEY_IN) {
     value.type = tx.type;
     if (!MONEY_TYPES.includes(tx.type)) errors.type = 'Pick a type';

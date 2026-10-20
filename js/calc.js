@@ -52,6 +52,11 @@ export function paidFromFor(category, settings) {
   return found ? found.paidFrom : PAID_FROM.ME;
 }
 
+/** Pot an expense is paid from: the choice saved on the entry, else its category's usual pot (older entries). */
+export function txPaidFrom(tx, settings) {
+  return tx.paidFrom === PAID_FROM.ME || tx.paidFrom === PAID_FROM.HOME ? tx.paidFrom : paidFromFor(tx.category, settings);
+}
+
 const sum = (txs) => txs.reduce((total, tx) => total + tx.amountPaise, 0);
 
 /** Everything the Dashboard shows, for one period. Mirrors the Excel formulas. */
@@ -59,7 +64,7 @@ export function dashboard(transactions, settings, period, today) {
   const txs = transactions.filter((tx) => inRange(tx.date, period));
   const expenses = txs.filter((tx) => tx.kind === KIND.EXPENSE);
   const moneyIn = txs.filter((tx) => tx.kind === KIND.MONEY_IN);
-  const isMine = (tx) => paidFromFor(tx.category, settings) === PAID_FROM.ME;
+  const isMine = (tx) => txPaidFrom(tx, settings) === PAID_FROM.ME;
   const ofType = (type) => sum(moneyIn.filter((tx) => tx.type === type));
 
   const received = ofType(MONEY_TYPE.IN);
@@ -271,7 +276,7 @@ const isWeekend = (iso) => [0, 6].includes(new Date(toMs(iso)).getUTCDay());
 export function spendingPatterns(transactions, settings, period, today) {
   const lastDay = today < period.end ? today : period.end;
   const expenses = transactions.filter((tx) => tx.kind === KIND.EXPENSE && inRange(tx.date, period));
-  const mine = expenses.filter((tx) => paidFromFor(tx.category, settings) === PAID_FROM.ME);
+  const mine = expenses.filter((tx) => txPaidFrom(tx, settings) === PAID_FROM.ME);
 
   // Average per elapsed day, so days with no spending count too.
   const days = { weekday: { spent: 0, count: 0 }, weekend: { spent: 0, count: 0 } };
@@ -287,7 +292,7 @@ export function spendingPatterns(transactions, settings, period, today) {
   const prevRange = { start: prev.start, end: addDays(prev.start, daysIn - 1) };
   const prevHasData = transactions.some((tx) => inRange(tx.date, prev));
   const mySpentBy = (range) => sum(transactions.filter((tx) =>
-    tx.kind === KIND.EXPENSE && inRange(tx.date, range) && paidFromFor(tx.category, settings) === PAID_FROM.ME));
+    tx.kind === KIND.EXPENSE && inRange(tx.date, range) && txPaidFrom(tx, settings) === PAID_FROM.ME));
 
   const byMode = new Map();
   for (const tx of expenses) byMode.set(tx.paidBy, (byMode.get(tx.paidBy) ?? 0) + tx.amountPaise);

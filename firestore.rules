@@ -13,7 +13,8 @@ service cloud.firestore {
         && d.date is string && d.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
         && d.note is string && d.note.size() <= 200
         && ((d.kind == 'moneyIn' && d.type in ['Money In', 'Saved', 'Given to Home', 'Taken from Savings'])
-            || (d.kind == 'expense' && d.category is string && d.category.size() > 0 && d.paidBy is string));
+            || (d.kind == 'expense' && d.category is string && d.category.size() > 0 && d.paidBy is string
+                && (!('paidFrom' in d) || d.paidFrom in ['Me', 'Home money'])));
     }
 
     match /users/{uid}/transactions/{id} {
