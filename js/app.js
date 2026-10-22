@@ -554,7 +554,9 @@ function summaryCard(m, rangeLabel, comparable, homePot) {
         ${kpi('Salary', money(m.salary), '', 'Money in')}
         ${kpi('Saved', money(m.saved), '', m.fromSavings ? `${formatINR(m.fromSavings)} taken back` : '')}
         ${!m.pool ? kpi('Given to Home', money(m.givenHome)) : ''}
-        ${kpi(m.pool ? 'Money for month' : 'My Money', money(m.myMoney), '', m.pool ? 'salary − saved' : 'to spend')}
+        ${m.pool
+          ? kpi('Total spent', money(m.mySpent + m.homeSpent), m.myLeft < 0 ? 'bad' : '', `of ${formatINR(m.myMoney)}${m.myMoney > 0 ? ` · ${Math.round(((m.mySpent + m.homeSpent) / m.myMoney) * 100)}%` : ''}`)
+          : kpi('My Money', money(m.myMoney), '', 'to spend')}
         ${kpi(m.pool ? 'My spend' : 'My Spent', money(m.mySpent))}
         ${m.pool && (homePot || m.homeSpent) ? kpi('Home spend', money(m.homeSpent)) : ''}
         ${kpi(m.pool ? 'Money Left' : 'My Money Left', money(m.myLeft), m.myLeft < 0 ? 'bad' : 'good', m.myLeft < 0 ? 'overspent' : '')}
