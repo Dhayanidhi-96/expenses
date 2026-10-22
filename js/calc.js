@@ -81,7 +81,16 @@ export function dashboard(transactions, settings, period, today) {
   const lastCounted = today < period.end ? today : period.end;
   const daysPassed = Math.max(0, daysBetween(period.start, lastCounted) + 1);
   const daysLeft = daysInPeriod - daysPassed;
-  const myLeft = myMoney - mySpent;
+
+  // Pool mode (no "Given to Home" this period): one pot for the month. Home bills reduce what's left,
+  // but only my spending is projected forward and planned against my categories' budgets.
+  const pool = givenHome === 0;
+  const myBudget = myBudgetTotal(settings.categories);
+  const homeBudget = settings.categories.filter((c) => c.paidFrom === PAID_FROM.HOME).reduce((t, c) => t + c.budgetPaise, 0);
+  const myLeft = pool ? myMoney - mySpent - homeSpent : myMoney - mySpent;
+  const dailyLimit = !pool ? myMoney / daysInPeriod
+    : myMoney > 0 ? (myBudget > 0 ? myBudget : myMoney) / daysInPeriod : 0;
+  const projected = daysPassed > 0 ? (mySpent * daysInPeriod) / daysPassed : 0;
 
   const categories = categoryBreakdown(expenses, settings);
   const top = categories.reduce((best, c) => (c.spent > (best?.spent ?? 0) ? c : best), null);
@@ -99,17 +108,22 @@ export function dashboard(transactions, settings, period, today) {
     myMoney,
     mySpent,
     myLeft,
-    dailyLimit: myMoney / daysInPeriod,
+    pool,
+    myBudget,
+    homeBudget,
+    dailyLimit,
     safePerDay: daysLeft > 0 ? myLeft / daysLeft : myLeft,
     spentToday: sum(myExpenses.filter((tx) => tx.date === today)),
     avgPerDay: daysPassed > 0 ? mySpent / daysPassed : 0,
-    projected: daysPassed > 0 ? (mySpent * daysInPeriod) / daysPassed : 0,
+    projected,
+    // Money left at the end of the period at today's pace (home bills counted as they are, not projected).
+    forecastLeft: (pool ? myMoney - homeSpent : myMoney) - projected,
     homeMoney: givenHome,
     homeSpent,
-    homeLeft: givenHome - homeSpent,
+    homeLeft: pool ? null : givenHome - homeSpent,
     topCategory: top ? top.name : null,
     categories,
-    daily: dailySeries(myExpenses, period, myMoney / daysInPeriod),
+    daily: dailySeries(myExpenses, period, dailyLimit),
     expenseCount: expenses.length,
   };
 }
@@ -235,7 +249,11 @@ export function buildAlerts(d, settings, today) {
     add('info', 'No Money In added for this period yet. Add your salary in Money In to see your limits.');
   } else if (d.myLeft < 0) {
     add('bad', `You have spent ${inr(-d.myLeft)} more than your money this period.`);
-  } else if (isCurrent && d.daysLeft > 0 && d.projected > d.myMoney) {
+  } else if (d.pool && isCurrent && d.daysLeft > 0 && d.daysPassed > 0 && d.forecastLeft < 0) {
+    add('warn', paceReady
+      ? `At this pace you'll end the period ${inr(-d.forecastLeft)} short. Keep to ${inr(d.safePerDay)}/day to stay within.`
+      : `You're spending faster than your money allows. Keep to ${inr(d.safePerDay)}/day to stay within.`);
+  } else if (!d.pool && isCurrent && d.daysLeft > 0 && d.projected > d.myMoney) {
     // Over the plan line already (same condition as projected > my money); forecast wording waits for enough days.
     const overPlan = d.mySpent - d.dailyLimit * d.daysPassed;
     add('warn', paceReady
@@ -258,7 +276,7 @@ export function buildAlerts(d, settings, today) {
   if (d.homeMoney > 0 && d.homeLeft < 0) add('bad', `Home spending is ${inr(-d.homeLeft)} more than the home money.`);
   else if (d.homeMoney > 0 && d.homeLeft < d.homeMoney * 0.1) add('warn', `Only ${inr(d.homeLeft)} of home money left.`);
 
-  const budgets = myBudgetTotal(settings.categories);
+  const budgets = d.pool ? d.myBudget + d.homeBudget : myBudgetTotal(settings.categories);
   if (isCurrent && d.myMoney > 0 && budgets > d.myMoney) {
     add('info', `Your budgets add up to ${inr(budgets)} but you have ${inr(d.myMoney)}. Add "Taken from Savings" in Money In if you need it.`);
   }

@@ -147,12 +147,12 @@ function renderDashboard() {
   const r = analyze(state.data.transactions, s, { preset: 'period', ...period, periods: 1 }, today, 'all');
   const compare = hasEntries(r.prevWindow) ? { changes: new Map(r.categories.map((c) => [c.name, c.change])), label: isCurrent ? 'vs same days last period' : 'vs last period' } : null;
 
-  const overProjected = d.projected > d.myMoney && d.myMoney > 0;
   const gap = isCurrent ? planGap(d, today) : null;
   const chip = gap === null ? ''
     : gap > 0 ? `<span class="chip-status warn">⚠ ${money(gap)} over plan</span>`
       : `<span class="chip-status good">✓ ${money(-gap)} under plan</span>`;
-  const endLeft = isCurrent ? (d.daysPassed > 0 ? d.myMoney - d.projected : null) : d.myLeft;
+  const endLeft = isCurrent ? (d.daysPassed > 0 ? d.forecastLeft : null) : d.myLeft;
+  const spentAll = d.pool ? d.mySpent + d.homeSpent : d.mySpent; // pool: everything comes out of the month's money
   const endStat = endLeft === null ? stat('End of period', '–')
     : stat(isCurrent ? 'End of period (forecast)' : 'Left at end', endLeft < 0 ? `${money(-endLeft)} short` : `${money(endLeft)} left`, endLeft < 0 ? 'bad' : 'good');
 
@@ -161,17 +161,20 @@ function renderDashboard() {
     <div class="dash-grid reorder"><div class="dash-col">
     ${ord(1, `
     <section class="card hero">
-      <div class="row between wrap"><div class="label">My money left</div>${chip}</div>
+      <div class="row between wrap"><div class="label">${d.pool ? 'Money left' : 'My money left'}</div>${chip}</div>
       <div class="value ${tone(d.myLeft)}">${money(d.myLeft)}</div>
-      ${d.myMoney > 0 ? `<div class="hero-bar" role="img" aria-label="${Math.round((d.mySpent / d.myMoney) * 100)}% of my money spent"><div class="${d.myLeft < 0 ? 'over' : overProjected ? 'warn' : ''}" style="width:${Math.min(100, (d.mySpent / d.myMoney) * 100)}%"></div></div>` : ''}
-      <div class="muted small">Spent ${money(d.mySpent)} of ${money(d.myMoney)}${d.myMoney > 0 ? ` · ${Math.round((d.mySpent / d.myMoney) * 100)}%` : ''}</div>
-      <div class="stats stats-4">
+      ${d.myMoney > 0 ? `<div class="hero-bar" role="img" aria-label="${Math.round((spentAll / d.myMoney) * 100)}% of the money spent"><div class="${d.myLeft < 0 ? 'over' : endLeft !== null && endLeft < 0 ? 'warn' : ''}" style="width:${Math.min(100, (spentAll / d.myMoney) * 100)}%"></div></div>` : ''}
+      <div class="muted small">Spent ${money(spentAll)} of ${money(d.myMoney)}${d.myMoney > 0 ? ` · ${Math.round((spentAll / d.myMoney) * 100)}%` : ''}</div>
+      ${d.pool && d.received > 0 ? `<p class="small money-sum">${money(d.received)} salary − ${money(d.saved)} saved${d.fromSavings ? ` + ${money(d.fromSavings)} from savings` : ''} − ${money(d.mySpent)} my spend − ${money(d.homeSpent)} home spend = <strong class="${d.myLeft < 0 ? 'bad' : ''}">${money(d.myLeft)} left</strong>${d.homeBudget && d.homeSpent > d.homeBudget ? ` <span class="bad">(home over budget by ${money(d.homeSpent - d.homeBudget)} – included)</span>` : ''}</p>` : ''}
+      <div class="stats ${d.pool ? '' : 'stats-4'}">
+        ${d.pool ? stat('My spend', money(d.mySpent) + (d.myBudget ? ` <span class="muted small">of ${formatINR(d.myBudget)}</span>` : '')) : ''}
+        ${d.pool ? stat('Home spend', money(d.homeSpent) + (d.homeBudget ? ` <span class="muted small">of ${formatINR(d.homeBudget)}</span>` : '')) : ''}
         ${stat(isCurrent ? 'Safe to spend / day' : 'Left per day', money(d.safePerDay, true), tone(d.safePerDay))}
         ${isCurrent ? stat('Spent today', money(d.spentToday), d.spentToday > d.safePerDay ? 'warn' : '') : ''}
         ${endStat}
         ${stat('Saved', money(d.netSaved) + (d.fromSavings ? ` <span class="muted small">(${formatINR(d.fromSavings)} taken)</span>` : ''))}
       </div>
-      <p class="muted small hero-foot">Average ${money(d.avgPerDay)}/day vs daily limit ${money(d.dailyLimit)}${d.avgPerDay > d.dailyLimit && d.dailyLimit > 0 ? ' <span class="warn">⚠</span>' : ''}</p>
+      <p class="muted small hero-foot">${d.pool ? 'My spend: average' : 'Average'} ${money(d.avgPerDay)}/day vs ${d.pool ? 'plan' : 'daily limit'} ${money(d.dailyLimit)}${d.avgPerDay > d.dailyLimit && d.dailyLimit > 0 ? ' <span class="warn">⚠</span>' : ''}</p>
     </section>
     `)}
     ${ord(3, alertsCard(buildAlerts(d, s, today)))}
@@ -233,12 +236,18 @@ function todayWeekCard(d, today) {
 function homeCard(d, period) {
   const h = homeBreakdown(state.data.transactions, settings(), period);
   const max = h.rows[0]?.total ?? 0;
-  const used = d.homeMoney > 0 ? Math.min(100, (d.homeSpent / d.homeMoney) * 100) : 0;
+  // Pool mode: home spend against the home categories' budgets; otherwise against money given home.
+  const base = d.pool ? d.homeBudget : d.homeMoney;
+  const over = d.homeSpent > base && base > 0;
+  const used = base > 0 ? Math.min(100, (d.homeSpent / base) * 100) : 0;
+  const right = d.pool
+    ? (base > 0 ? `${over ? 'Over by' : 'Left'} <strong class="${over ? 'bad' : ''}">${money(Math.abs(base - d.homeSpent))}</strong>` : `Spent <strong>${money(d.homeSpent)}</strong>`)
+    : `Left <strong class="${d.homeLeft < 0 ? 'bad' : ''}">${money(d.homeLeft)}</strong>`;
   return `
     <section class="card">
-      <div class="row between wrap"><h3>Home money</h3><span class="small">Left <strong class="${d.homeLeft < 0 ? 'bad' : ''}">${money(d.homeLeft)}</strong></span></div>
-      ${d.homeMoney > 0 ? `<div class="hero-bar" role="img" aria-label="${Math.round(used)}% of home money used"><div class="${d.homeLeft < 0 ? 'over' : ''}" style="width:${used}%"></div></div>` : ''}
-      <div class="muted small">Spent ${money(d.homeSpent)} of ${money(d.homeMoney)} given to home</div>
+      <div class="row between wrap"><h3>${d.pool ? 'Home spend' : 'Home money'}</h3><span class="small">${right}</span></div>
+      ${base > 0 ? `<div class="hero-bar" role="img" aria-label="${Math.round(used)}% used"><div class="${over ? 'over' : ''}" style="width:${used}%"></div></div>` : ''}
+      <div class="muted small">${d.pool ? `Spent ${money(d.homeSpent)}${base ? ` of home budget ${money(base)}` : ''}` : `Spent ${money(d.homeSpent)} of ${money(d.homeMoney)} given to home`}</div>
       ${h.rows.map((x) => `
         <div class="hbar">
           <div class="row between"><span>${esc(x.name)}</span><strong>${money(x.total)}</strong></div>
@@ -346,7 +355,7 @@ function renderSpendChart(d, today) {
   let describe;
 
   if (mode === 'running') {
-    const max = Math.max(d.myMoney, days[days.length - 1].running, d.projected, 1);
+    const max = Math.max(d.pool ? d.dailyLimit * days.length : d.myMoney, days[days.length - 1].running, d.projected, 1);
     const g = chartGeometry(days.length, max);
     const planLine = d.dailyLimit > 0 ? `<polyline class="plan" points="${days.map((_, i) => `${g.cx(i)},${g.y(plan(i))}`).join(' ')}"/>` : '';
     const actual = days.slice(0, lastIndex + 1);
@@ -382,7 +391,7 @@ function renderSpendChart(d, today) {
     : lastIndex < 0 ? 'This period has not started yet.'
       : (gap > 0 ? `You are <span class="warn">${money(gap)} over plan</span> so far.` : `You are <span class="good">${money(-gap)} under plan</span> so far.`)
         + (lastIndex < days.length - 1 && d.daysPassed > 0
-          ? ` At this pace you'll end with ${d.myMoney - d.projected < 0 ? `<span class="bad">${money(d.projected - d.myMoney)} short</span>` : `<span class="good">${money(d.myMoney - d.projected)} left</span>`}.` : '')
+          ? ` At this pace you'll end with ${d.forecastLeft < 0 ? `<span class="bad">${money(-d.forecastLeft)} short</span>` : `<span class="good">${money(d.forecastLeft)} left</span>`}.` : '')
         + ' Tap a day for details.';
 
   el.innerHTML = `
@@ -544,17 +553,18 @@ function summaryCard(m, rangeLabel, comparable, homePot) {
       <div class="kpis">
         ${kpi('Salary', money(m.salary), '', 'Money in')}
         ${kpi('Saved', money(m.saved), '', m.fromSavings ? `${formatINR(m.fromSavings)} taken back` : '')}
-        ${homePot || m.givenHome ? kpi('Given to Home', money(m.givenHome)) : ''}
-        ${kpi('My Money', money(m.myMoney), '', 'to spend')}
-        ${kpi('My Spent', money(m.mySpent))}
-        ${kpi('My Money Left', money(m.myLeft), m.myLeft < 0 ? 'bad' : 'good', m.myLeft < 0 ? 'overspent' : '')}
+        ${!m.pool ? kpi('Given to Home', money(m.givenHome)) : ''}
+        ${kpi(m.pool ? 'Money for month' : 'My Money', money(m.myMoney), '', m.pool ? 'salary − saved' : 'to spend')}
+        ${kpi(m.pool ? 'My spend' : 'My Spent', money(m.mySpent))}
+        ${m.pool && (homePot || m.homeSpent) ? kpi('Home spend', money(m.homeSpent)) : ''}
+        ${kpi(m.pool ? 'Money Left' : 'My Money Left', money(m.myLeft), m.myLeft < 0 ? 'bad' : 'good', m.myLeft < 0 ? 'overspent' : '')}
       </div>
       ${salarySplit(m)}
       <div class="kpi-strip">
         <span>Savings rate <strong>${rate}</strong></span>
         <span>Average / day <strong>${money(m.avgPerDay)}</strong></span>
-        <span>Daily limit <strong>${money(m.dailyLimit)}</strong></span>
-        ${homePot ? `<span>Home left <strong class="${m.homeLeft < 0 ? 'bad' : ''}">${money(m.homeLeft)}</strong></span>` : ''}
+        <span>${m.pool ? 'Money per day' : 'Daily limit'} <strong>${money(m.dailyLimit)}</strong></span>
+        ${homePot && !m.pool ? `<span>Home left <strong class="${m.homeLeft < 0 ? 'bad' : ''}">${money(m.homeLeft)}</strong></span>` : ''}
         ${compare}
       </div>
     </section>`;
@@ -565,7 +575,7 @@ function salarySplit(m) {
   if (m.salary <= 0) return '<p class="muted small" style="margin:12px 0 0">Add your salary in Money In to see where it went.</p>';
   const parts = [
     { key: 's1', label: 'Saved', value: m.saved },
-    { key: 's2', label: 'Given to Home', value: m.givenHome },
+    { key: 's2', label: m.pool ? 'Home spend' : 'Given to Home', value: m.pool ? m.homeSpent : m.givenHome },
     { key: 's3', label: 'My spent', value: m.mySpent },
     { key: 'left', label: 'Left', value: Math.max(0, m.myLeft) },
   ].filter((p) => p.value > 0);
@@ -684,10 +694,10 @@ function categoryTableCard(rows, scope, comparable, homePot) {
 function monthTableCard(h) {
   if (!h.rows.length) return '';
   const t = h.rows.reduce((acc, x) => ({
-    received: acc.received + x.received, saved: acc.saved + x.saved, givenHome: acc.givenHome + x.givenHome,
+    received: acc.received + x.received, saved: acc.saved + x.saved, home: acc.home + x.home,
     mySpent: acc.mySpent + x.mySpent, myLeft: acc.myLeft + x.myLeft,
-  }), { received: 0, saved: 0, givenHome: 0, mySpent: 0, myLeft: 0 });
-  const cells = (x) => `<td class="num">${formatINR(x.received)}</td><td class="num">${formatINR(x.saved)}</td><td class="num">${formatINR(x.givenHome)}</td>
+  }), { received: 0, saved: 0, home: 0, mySpent: 0, myLeft: 0 });
+  const cells = (x) => `<td class="num">${formatINR(x.received)}</td><td class="num">${formatINR(x.saved)}</td><td class="num">${formatINR(x.home)}</td>
     <td class="num">${formatINR(x.mySpent)}</td><td class="num ${x.myLeft < 0 ? 'bad' : ''}">${formatINR(x.myLeft)}</td>`;
   return `
     <section class="card">
@@ -697,7 +707,7 @@ function monthTableCard(h) {
         <tbody>${h.rows.map((x) => `<tr><td>${fmtDate(x.period.start)}${x.current ? ' <span class="tag">now</span>' : ''}</td>${cells(x)}</tr>`).join('')}</tbody>
         ${h.rows.length > 1 ? `<tfoot><tr><th>Total</th>${cells(t).replace(/<td/g, '<th').replace(/<\/td>/g, '</th>')}</tr></tfoot>` : ''}
       </table></div>
-      <p class="muted small" style="margin:8px 0 0">Spent and Left are your own money. Current period: so far.</p>
+      <p class="muted small" style="margin:8px 0 0">Home = home spending (or money given home in older months). Spent = my spending. Left = what was not spent. Current period: so far.</p>
     </section>`;
 }
 
@@ -899,6 +909,7 @@ function renderEntryView(kind) {
   const paidBy = tx?.paidBy ?? (s.payModes.includes(lastPaidBy) ? lastPaidBy : s.payModes[0]);
   const paidFrom = tx?.kind === KIND.EXPENSE ? txPaidFrom(tx, s) : PAID_FROM.ME;
   const homePot = usesHomePot(s, state.data.transactions); // separate home money in use?
+  const usesGivenHome = state.data.transactions.some((t) => t.type === MONEY_TYPE.HOME); // older data only
   const chips = (name, options, selected) => options.map((o) => `
     <label class="chip"><input type="radio" name="${name}" value="${esc(o)}" ${o === selected ? 'checked' : ''}><span>${esc(o)}</span></label>`).join('');
 
@@ -928,8 +939,8 @@ function renderEntryView(kind) {
         ${homePot || paidFrom === PAID_FROM.HOME ? `<fieldset class="chips"><legend>Paid from</legend>${chips('paidFrom', [PAID_FROM.ME, PAID_FROM.HOME], paidFrom)}</fieldset>
         <div class="field-error" data-error="paidFrom"></div>` : ''}`
       : `
-        <fieldset class="chips"><legend>Type</legend>${chips('type', MONEY_TYPES.filter((t) => t !== MONEY_TYPE.HOME || homePot || tx?.type === MONEY_TYPE.HOME), tx?.type ?? MONEY_TYPE.IN)}</fieldset>
-        <p class="muted small">Money In = salary/cash received · Saved = put aside${homePot ? ' · Given to Home = money for home expenses' : ''} · Taken from Savings = money moved back from savings to spend.${homePot ? '' : ' Money you give home: add it as an expense in the Home category.'}</p>
+        <fieldset class="chips"><legend>Type</legend>${chips('type', MONEY_TYPES.filter((t) => t !== MONEY_TYPE.HOME || usesGivenHome || tx?.type === MONEY_TYPE.HOME), tx?.type ?? MONEY_TYPE.IN)}</fieldset>
+        <p class="muted small">Money In = salary/cash received · Saved = put aside${usesGivenHome ? ' · Given to Home = money for home expenses' : ''} · Taken from Savings = money moved back from savings to spend.${usesGivenHome ? '' : ' Money you give home: add it as an expense in the Home category.'}</p>
         <div class="field-error" data-error="type"></div>`}
       <div class="grid2">
         <div>

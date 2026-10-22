@@ -189,7 +189,7 @@ export function savingsHistory(transactions, settings, today, count = 6) {
     const p = shiftPeriod(current, -i, settings.periodStartDay);
     if (!hasDataIn(transactions, p)) continue;
     const d = dashboard(transactions, settings, p, today);
-    rows.push({ period: p, current: i === 0, received: d.received, saved: d.saved, givenHome: d.givenHome, fromSavings: d.fromSavings, netSaved: d.netSaved, myMoney: d.myMoney, mySpent: d.mySpent, myLeft: d.myLeft });
+    rows.push({ period: p, current: i === 0, received: d.received, saved: d.saved, givenHome: d.givenHome, home: d.pool ? d.homeSpent : d.givenHome, fromSavings: d.fromSavings, netSaved: d.netSaved, myMoney: d.myMoney, mySpent: d.mySpent, myLeft: d.myLeft });
   }
   const moneyIn = transactions.filter((tx) => tx.kind === KIND.MONEY_IN);
   const allTimeSaved = sum(moneyIn.filter((tx) => tx.type === MONEY_TYPE.SAVED)) - sum(moneyIn.filter((tx) => tx.type === MONEY_TYPE.FROM_SAVINGS));
@@ -219,11 +219,12 @@ export function moneySummary(transactions, settings, range, today) {
   const { prevWindow, prevHasData } = comparisonWindow(transactions, range, today, settings.periodStartDay);
   const prevSpent = mySpentIn(transactions.filter((tx) => inRange(tx.date, prevWindow)));
 
+  const pool = givenHome === 0; // one pot: home spending also comes out of the month's money
   return {
-    salary, saved, givenHome, fromSavings, myMoney, mySpent,
-    myLeft: myMoney - mySpent,
+    salary, saved, givenHome, fromSavings, myMoney, mySpent, pool,
+    myLeft: pool ? myMoney - mySpent - homeSpent : myMoney - mySpent,
     homeSpent,
-    homeLeft: givenHome - homeSpent,
+    homeLeft: pool ? null : givenHome - homeSpent,
     avgPerDay: daysPassed ? mySpent / daysPassed : 0,
     dailyLimit: myMoney / daysInRange,
     prevWindow,

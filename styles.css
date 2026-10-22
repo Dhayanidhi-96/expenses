@@ -367,3 +367,4 @@ button:focus-visible, a:focus-visible, .chip:focus-within span, summary:focus-vi
   .dash-grid.reorder > .dash-col { display: contents; }
   .dash-grid.reorder .dash-col > * { margin-top: 0 !important; }
 }
+.money-sum { margin: 8px 0 0; color: var(--text-2); line-height: 1.6; }
