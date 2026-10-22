@@ -9,6 +9,7 @@ export const MONEY_TYPES = Object.values(MONEY_TYPE);
 export const DEFAULT_SETTINGS = Object.freeze({
   periodStartDay: 16,
   warnPercent: 80,
+  homeLimitPaise: 0, // monthly home spend limit; 0 = use the home categories' budgets
   payModes: ['UPI', 'Cash', 'Card', 'Other'],
   categories: [
     { name: 'Travel / Bus', budgetPaise: 60000, paidFrom: PAID_FROM.ME },
@@ -84,8 +85,10 @@ export function validateSettings(s) {
   const errors = [];
   const day = Number(s.periodStartDay);
   const warn = Number(s.warnPercent);
+  const homeLimitPaise = Number(s.homeLimitPaise ?? 0);
   if (!Number.isInteger(day) || day < 1 || day > 28) errors.push('Period start day must be 1–28');
   if (!Number.isInteger(warn) || warn < 1 || warn > 100) errors.push('Warning % must be 1–100');
+  if (!Number.isSafeInteger(homeLimitPaise) || homeLimitPaise < 0) errors.push('Home spend limit must be ₹0 or more');
 
   const payModes = [...new Set((s.payModes ?? []).map(cleanText).filter(Boolean))];
   if (!payModes.length) errors.push('Add at least one payment mode');
@@ -107,7 +110,7 @@ export function validateSettings(s) {
   return {
     ok: errors.length === 0,
     errors,
-    value: { periodStartDay: day, warnPercent: warn, payModes, categories },
+    value: { periodStartDay: day, warnPercent: warn, homeLimitPaise, payModes, categories },
   };
 }
 

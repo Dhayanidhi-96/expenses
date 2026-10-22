@@ -247,7 +247,7 @@ function homeCard(d, period) {
     <section class="card">
       <div class="row between wrap"><h3>${d.pool ? 'Home spend' : 'Home money'}</h3><span class="small">${right}</span></div>
       ${base > 0 ? `<div class="hero-bar" role="img" aria-label="${Math.round(used)}% used"><div class="${over ? 'over' : ''}" style="width:${used}%"></div></div>` : ''}
-      <div class="muted small">${d.pool ? `Spent ${money(d.homeSpent)}${base ? ` of home budget ${money(base)}` : ''}` : `Spent ${money(d.homeSpent)} of ${money(d.homeMoney)} given to home`}</div>
+      <div class="muted small">${d.pool ? `Spent ${money(d.homeSpent)}${base ? ` of ${settings().homeLimitPaise > 0 ? 'home limit' : 'home budget'} ${money(base)}` : ''}` : `Spent ${money(d.homeSpent)} of ${money(d.homeMoney)} given to home`}</div>
       ${h.rows.map((x) => `
         <div class="hbar">
           <div class="row between"><span>${esc(x.name)}</span><strong>${money(x.total)}</strong></div>
@@ -1261,6 +1261,11 @@ function renderSettings() {
         <div><label for="warnPercent">Warn at % of budget</label><input id="warnPercent" name="warnPercent" type="number" min="1" max="100" value="${s.warnPercent}"></div>
       </div>
       <div>
+        <label for="homeLimit">Home spend limit per month (₹)</label>
+        <input id="homeLimit" name="homeLimit" inputmode="decimal" placeholder="e.g. 10000" value="${s.homeLimitPaise ? paiseToInput(s.homeLimitPaise).replace(/\.00$/, '') : ''}">
+        <p class="muted small" style="margin:4px 0 0">Everything marked "Paid from: Home money" counts against this. Leave empty to use the home categories' budgets.</p>
+      </div>
+      <div>
         <div class="label-text">Categories · monthly budget (₹) · paid from</div>
         <div id="cat-rows">${s.categories.map(catRow).join('')}</div>
         <button type="button" class="btn" data-action="add-cat">+ Add category</button>
@@ -1342,9 +1347,13 @@ async function saveSettingsForm(form) {
     if (used) errors.push(`"${c.name}" is used by ${used} entr${used === 1 ? 'y' : 'ies'}. Rename it instead of removing.`);
   }
 
+  const limitText = form.homeLimit.value.trim();
+  const homeLimit = limitText === '' || Number(limitText) === 0 ? { ok: true, paise: 0 } : parseAmount(limitText);
+  if (!homeLimit.ok) errors.push(`Home spend limit: ${homeLimit.error}`);
   const next = {
     periodStartDay: Number(form.periodStartDay.value),
     warnPercent: Number(form.warnPercent.value),
+    homeLimitPaise: homeLimit.paise ?? 0,
     payModes: form.payModes.value.split(','),
     categories,
   };

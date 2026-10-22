@@ -86,7 +86,9 @@ export function dashboard(transactions, settings, period, today) {
   // but only my spending is projected forward and planned against my categories' budgets.
   const pool = givenHome === 0;
   const myBudget = myBudgetTotal(settings.categories);
-  const homeBudget = settings.categories.filter((c) => c.paidFrom === PAID_FROM.HOME).reduce((t, c) => t + c.budgetPaise, 0);
+  // One monthly home limit when set in Settings; otherwise the home categories' budgets added up.
+  const homeBudget = settings.homeLimitPaise > 0 ? settings.homeLimitPaise
+    : settings.categories.filter((c) => c.paidFrom === PAID_FROM.HOME).reduce((t, c) => t + c.budgetPaise, 0);
   const myLeft = pool ? myMoney - mySpent - homeSpent : myMoney - mySpent;
   const dailyLimit = !pool ? myMoney / daysInPeriod
     : myMoney > 0 ? (myBudget > 0 ? myBudget : myMoney) / daysInPeriod : 0;
