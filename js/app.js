@@ -5,7 +5,7 @@ import { KIND, MONEY_TYPE, MONEY_TYPES, PAID_FROM, newId, validateTransaction, p
 import {
   todayISO, periodFor, shiftPeriod, addDays, dashboard, filterTransactions, sortTransactions,
   summarize, rangeForPreset, inRange, paidFromFor, txPaidFrom, myBudgetTotal, daysBetween,
-  buildAlerts, planGap, weekGlance, underLimitStreak,
+  buildAlerts, planGap, weekGlance, underLimitStreak, usesHomePot,
 } from './calc.js';
 import { buildBackup, buildCsv, download, backupFilename } from './backup.js';
 import { RANGE_PRESETS, SCOPES, analyticsRange, analyze, budgetReview, categoryTrends, savingsHistory, moneySummary, categoryBudgetRows, categoryFrequency, homeBreakdown } from './analytics.js';
@@ -179,7 +179,7 @@ function renderDashboard() {
     ${ord(5, categoriesCard(d, compare))}
     </div><div class="dash-col">
     ${ord(2, isCurrent ? todayWeekCard(d, today) : '')}
-    ${ord(6, homeCard(d, period))}
+    ${ord(6, usesHomePot(s, state.data.transactions, period) ? homeCard(d, period) : '')}
     </div></div>`;
 
   bindPeriodNav();
@@ -475,6 +475,8 @@ function renderAnalyticsBody() {
   }
 
   const m = moneySummary(state.data.transactions, s, range, today);
+  const homePot = usesHomePot(s, state.data.transactions, range);
+  if (!homePot && a.scope === 'home') a.scope = 'me';
   const r = analyze(state.data.transactions, s, range, today, a.scope);
   const comparable = hasEntries(r.prevWindow); // compare only with days that actually have entries
   const scopeLabel = SCOPES.find(([v]) => v === a.scope)[1];
@@ -482,9 +484,9 @@ function renderAnalyticsBody() {
   const usefulModes = r.paymentModes.filter((p) => p.share >= 0.1).length >= 2;
 
   el.innerHTML = `
-    ${summaryCard(m, rangeLabel, hasEntries(m.prevWindow))}
+    ${summaryCard(m, rangeLabel, hasEntries(m.prevWindow), homePot)}
     <div class="dash-grid an-grid">
-      <div class="dash-col">${categoryTableCard(categoryBudgetRows(r, s, a.scope), a.scope, comparable)}</div>
+      <div class="dash-col">${categoryTableCard(categoryBudgetRows(r, s, a.scope), a.scope, comparable, homePot)}</div>
       <div class="dash-col"><section class="card chart" id="an-time"></section></div>
     </div>
     <div class="dash-grid an-grid">
@@ -531,7 +533,7 @@ const kpi = (label, value, cls = '', note = '') =>
   `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value ${cls}">${value}</div>${note ? `<div class="kpi-note">${note}</div>` : ''}</div>`;
 
 /** One card: Excel-style boxes → where the salary went → key rates. */
-function summaryCard(m, rangeLabel, comparable) {
+function summaryCard(m, rangeLabel, comparable, homePot) {
   const netSaved = m.saved - m.fromSavings;
   const rate = m.salary > 0 ? `${Math.round((netSaved / m.salary) * 100)}%` : '–';
   const compare = m.change === null || !comparable ? ''
@@ -542,7 +544,7 @@ function summaryCard(m, rangeLabel, comparable) {
       <div class="kpis">
         ${kpi('Salary', money(m.salary), '', 'Money in')}
         ${kpi('Saved', money(m.saved), '', m.fromSavings ? `${formatINR(m.fromSavings)} taken back` : '')}
-        ${kpi('Given to Home', money(m.givenHome))}
+        ${homePot || m.givenHome ? kpi('Given to Home', money(m.givenHome)) : ''}
         ${kpi('My Money', money(m.myMoney), '', 'to spend')}
         ${kpi('My Spent', money(m.mySpent))}
         ${kpi('My Money Left', money(m.myLeft), m.myLeft < 0 ? 'bad' : 'good', m.myLeft < 0 ? 'overspent' : '')}
@@ -552,7 +554,7 @@ function summaryCard(m, rangeLabel, comparable) {
         <span>Savings rate <strong>${rate}</strong></span>
         <span>Average / day <strong>${money(m.avgPerDay)}</strong></span>
         <span>Daily limit <strong>${money(m.dailyLimit)}</strong></span>
-        <span>Home left <strong class="${m.homeLeft < 0 ? 'bad' : ''}">${money(m.homeLeft)}</strong></span>
+        ${homePot ? `<span>Home left <strong class="${m.homeLeft < 0 ? 'bad' : ''}">${money(m.homeLeft)}</strong></span>` : ''}
         ${compare}
       </div>
     </section>`;
@@ -646,7 +648,7 @@ function renderSavingsChart(h) {
 }
 
 /** Excel-style category table: spent vs budget, biggest first; unused budgets folded away. */
-function categoryTableCard(rows, scope, comparable) {
+function categoryTableCard(rows, scope, comparable, homePot) {
   const used = rows.filter((x) => !x.unused).sort((a, b) => b.spent - a.spent);
   const unused = rows.filter((x) => x.unused);
   const total = used.reduce((t, x) => t + x.spent, 0);
@@ -669,9 +671,9 @@ function categoryTableCard(rows, scope, comparable) {
     <section class="card">
       <div class="row between wrap">
         <h3>Spending by category</h3>
-        <div class="seg" role="group" aria-label="Which money">
+        ${homePot ? `<div class="seg" role="group" aria-label="Which money">
           ${SCOPES.map(([v, l]) => `<button type="button" data-scope="${v}" aria-pressed="${v === scope}">${l.replace(' money', '')}</button>`).join('')}
-        </div>
+        </div>` : ''}
       </div>
       ${used.map(row).join('') || '<p class="muted">No spending in this range.</p>'}
       ${unused.length ? `<details class="more"><summary>Show ${unused.length} unused categor${unused.length === 1 ? 'y' : 'ies'}</summary>${unused.map(row).join('')}</details>` : ''}
@@ -896,6 +898,7 @@ function renderEntryView(kind) {
   const lastPaidBy = prefs.get('paidBy');
   const paidBy = tx?.paidBy ?? (s.payModes.includes(lastPaidBy) ? lastPaidBy : s.payModes[0]);
   const paidFrom = tx?.kind === KIND.EXPENSE ? txPaidFrom(tx, s) : PAID_FROM.ME;
+  const homePot = usesHomePot(s, state.data.transactions); // separate home money in use?
   const chips = (name, options, selected) => options.map((o) => `
     <label class="chip"><input type="radio" name="${name}" value="${esc(o)}" ${o === selected ? 'checked' : ''}><span>${esc(o)}</span></label>`).join('');
 
@@ -922,11 +925,11 @@ function renderEntryView(kind) {
         </div>
         <fieldset class="chips"><legend>Paid by</legend>${chips('paidBy', s.payModes, paidBy)}</fieldset>
         <div class="field-error" data-error="paidBy"></div>
-        <fieldset class="chips"><legend>Paid from</legend>${chips('paidFrom', [PAID_FROM.ME, PAID_FROM.HOME], paidFrom)}</fieldset>
-        <div class="field-error" data-error="paidFrom"></div>`
+        ${homePot || paidFrom === PAID_FROM.HOME ? `<fieldset class="chips"><legend>Paid from</legend>${chips('paidFrom', [PAID_FROM.ME, PAID_FROM.HOME], paidFrom)}</fieldset>
+        <div class="field-error" data-error="paidFrom"></div>` : ''}`
       : `
-        <fieldset class="chips"><legend>Type</legend>${chips('type', MONEY_TYPES, tx?.type ?? MONEY_TYPE.IN)}</fieldset>
-        <p class="muted small">Money In = salary/cash received · Saved = put aside · Given to Home = money for home expenses · Taken from Savings = money moved back from savings to spend.</p>
+        <fieldset class="chips"><legend>Type</legend>${chips('type', MONEY_TYPES.filter((t) => t !== MONEY_TYPE.HOME || homePot || tx?.type === MONEY_TYPE.HOME), tx?.type ?? MONEY_TYPE.IN)}</fieldset>
+        <p class="muted small">Money In = salary/cash received · Saved = put aside${homePot ? ' · Given to Home = money for home expenses' : ''} · Taken from Savings = money moved back from savings to spend.${homePot ? '' : ' Money you give home: add it as an expense in the Home category.'}</p>
         <div class="field-error" data-error="type"></div>`}
       <div class="grid2">
         <div>

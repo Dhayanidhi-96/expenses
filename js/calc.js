@@ -353,3 +353,14 @@ export function underLimitStreak(daily, today, limit) {
   }
   return n;
 }
+
+/**
+ * Is the separate home-money pot in use? True when a category is paid from Home money, or (within `range`,
+ * or anywhere when no range) there is a "Given to Home" entry or an expense switched to Home money.
+ * When false the app hides the pot (owner now records home costs as normal expenses).
+ */
+export function usesHomePot(settings, transactions, range = null) {
+  if (settings.categories.some((c) => c.paidFrom === PAID_FROM.HOME)) return true;
+  return transactions.some((tx) => (!range || inRange(tx.date, range))
+    && ((tx.kind === KIND.MONEY_IN && tx.type === MONEY_TYPE.HOME) || (tx.kind === KIND.EXPENSE && tx.paidFrom === PAID_FROM.HOME)));
+}
