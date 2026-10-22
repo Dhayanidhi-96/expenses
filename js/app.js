@@ -8,7 +8,7 @@ import {
   buildAlerts, planGap, weekGlance, underLimitStreak, usesHomePot,
 } from './calc.js';
 import { buildBackup, buildCsv, download, backupFilename } from './backup.js';
-import { RANGE_PRESETS, SCOPES, analyticsRange, analyze, budgetReview, categoryTrends, savingsHistory, moneySummary, categoryBudgetRows, categoryFrequency, homeBreakdown } from './analytics.js';
+import { RANGE_PRESETS, SCOPES, analyticsRange, analyze, budgetReview, categoryTrends, savingsHistory, moneySummary, categoryFrequency, homeBreakdown, categoryBreakdownRows, rangeBudgets } from './analytics.js';
 
 // ---------------- State
 
@@ -16,7 +16,7 @@ const state = {
   data: { ready: false, user: null, settings: null, transactions: [] },
   periodOffset: 0,
   chartMode: 'running',
-  analytics: { preset: 'period', scope: 'me', timeView: 'time', from: '', to: '' },
+  analytics: { preset: 'period', scope: 'me', timeView: 'daily', from: '', to: '' },
   editingId: null,
   saving: false,
   settingsDirty: false,
@@ -439,21 +439,27 @@ function bindHover(container, describe, summary) {
 
 function renderAnalytics() {
   const a = state.analytics;
-  const opt = (value, label, selected) => `<option value="${value}" ${value === selected ? 'selected' : ''}>${label}</option>`;
+  const short = { period: 'This month', 'last-period': 'Last month', '3p': '3 months', '6p': '6 months', year: 'This year', custom: 'Custom' };
   view.innerHTML = `
-    <section class="card">
-      <div class="an-controls">
-        <div><label for="an-range">Range</label><select id="an-range">${RANGE_PRESETS.map(([v, l]) => opt(v, l, a.preset)).join('')}</select></div>
-        <div data-custom ${a.preset === 'custom' ? '' : 'hidden'}><label for="an-from">From</label><input id="an-from" type="date" value="${esc(a.from)}"></div>
-        <div data-custom ${a.preset === 'custom' ? '' : 'hidden'}><label for="an-to">To</label><input id="an-to" type="date" value="${esc(a.to)}"></div>
+    <div class="range-bar">
+      <div class="range-chips" role="group" aria-label="Range">
+        ${RANGE_PRESETS.map(([v]) => `<button type="button" class="range-chip" data-preset="${v}" aria-pressed="${v === a.preset}">${short[v]}</button>`).join('')}
       </div>
-    </section>
+      <div class="an-controls" ${a.preset === 'custom' ? '' : 'hidden'}>
+        <div><label for="an-from">From</label><input id="an-from" type="date" value="${esc(a.from)}"></div>
+        <div><label for="an-to">To</label><input id="an-to" type="date" value="${esc(a.to)}"></div>
+      </div>
+    </div>
     <div id="an-body"></div>`;
+  view.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => {
+    a.preset = b.dataset.preset;
+    view.querySelectorAll('[data-preset]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    view.querySelector('.an-controls').hidden = a.preset !== 'custom';
+    renderAnalyticsBody();
+  }));
   view.querySelector('.an-controls').addEventListener('change', () => {
-    a.preset = $('#an-range').value;
     a.from = $('#an-from').value;
     a.to = $('#an-to').value;
-    view.querySelectorAll('[data-custom]').forEach((el) => { el.hidden = a.preset !== 'custom'; });
     renderAnalyticsBody();
   });
   renderAnalyticsBody();
@@ -487,31 +493,39 @@ function renderAnalyticsBody() {
   const homePot = usesHomePot(s, state.data.transactions, range);
   if (!homePot && a.scope === 'home') a.scope = 'me';
   const r = analyze(state.data.transactions, s, range, today, a.scope);
+  const all = a.scope === 'all' ? r : analyze(state.data.transactions, s, range, today, 'all');
+  const budgets = rangeBudgets(all, s);
   const comparable = hasEntries(r.prevWindow); // compare only with days that actually have entries
   const scopeLabel = SCOPES.find(([v]) => v === a.scope)[1];
-  const history = savingsHistory(state.data.transactions, s, today);
   const usefulModes = r.paymentModes.filter((p) => p.share >= 0.1).length >= 2;
+  const inProgress = inRange(today, range) && range.periods === 1;
+  const subtitle = `${rangeLabel}${inProgress ? ` · Day ${daysBetween(range.start, today) + 1} of ${daysBetween(range.start, range.end) + 1}` : ''}`;
 
   el.innerHTML = `
-    ${summaryCard(m, rangeLabel, hasEntries(m.prevWindow), homePot)}
+    ${moneyLeftHero(m, subtitle, hasEntries(m.prevWindow))}
+    ${spendSplitCards(m, budgets, homePot)}
     <div class="dash-grid an-grid">
-      <div class="dash-col">${categoryTableCard(categoryBudgetRows(r, s, a.scope), a.scope, comparable, homePot)}</div>
       <div class="dash-col"><section class="card chart" id="an-time"></section></div>
+      <div class="dash-col">${categoryCard(categoryBreakdownRows(r, categoryFrequency(state.data.transactions, s, range, a.scope), s, a.scope), a.scope, comparable, homePot)}</div>
     </div>
     <div class="dash-grid an-grid">
-      <div class="dash-col">${changesCard(r, comparable, scopeLabel)}</div>
-      <div class="dash-col">${habitsCard(categoryFrequency(state.data.transactions, s, range, a.scope), scopeLabel)}</div>
+      <div class="dash-col"><section class="card" id="an-calendar"></section></div>
+      <div class="dash-col">${weekdayCard(r, scopeLabel)}</div>
     </div>
-    <section class="card chart" id="an-savings"></section>
-    ${monthTableCard(history)}
+    ${(() => {
+      const biggest = `<section class="card"><h3>Biggest expenses</h3>${r.top.length ? `<ul class="list card-list flat">${r.top.map(txRow).join('')}</ul>` : '<p class="muted">No expenses in this range.</p>'}</section>`;
+      // Payment methods only when more than one is really used; otherwise Biggest expenses takes the full width.
+      return usefulModes
+        ? `<div class="dash-grid an-grid"><div class="dash-col">${biggest}</div><div class="dash-col">${barListCard('Payment methods', r.paymentModes.map((p) => ({ name: p.mode, value: p.spent, sub: `${Math.round(p.share * 100)}%` })), '')}</div></div>`
+        : biggest;
+    })()}
+    ${monthStoryCard(savingsHistory(state.data.transactions, s, today))}
+    ${suggestionCard(budgetReview(state.data.transactions, s, today))}
     <details class="more-details">
-      <summary>More details <span class="muted small">budget suggestions · trends · calendar${usefulModes ? ' · payments' : ''} · top 5</span></summary>
+      <summary>More details <span class="muted small">category trends · biggest changes</span></summary>
       <div class="more-body">
-        ${budgetReviewCard(budgetReview(state.data.transactions, s, today))}
         ${trendsCard(categoryTrends(state.data.transactions, s, today, a.scope), scopeLabel)}
-        <section class="card" id="an-calendar"></section>
-        ${usefulModes ? barListCard('Payment methods', r.paymentModes.map((p) => ({ name: p.mode, value: p.spent, sub: `${Math.round(p.share * 100)}%` })), 'No payments in this range.') : ''}
-        <section class="card"><h3>Top 5 expenses</h3>${r.top.length ? `<ul class="list card-list flat">${r.top.map(txRow).join('')}</ul>` : '<p class="muted">No expenses in this range.</p>'}</section>
+        ${changesCard(r, comparable, scopeLabel)}
       </div>
     </details>`;
 
@@ -524,8 +538,7 @@ function renderAnalyticsBody() {
     navigate('history');
   }));
   bindTxList(el);
-  renderTimeChart(r, m, range);
-  renderSavingsChart(history);
+  renderTimeChart(r, m, range, budgets);
   renderCalendar(r);
 }
 
@@ -541,58 +554,172 @@ const changeText = (change, ratio) => {
 const kpi = (label, value, cls = '', note = '') =>
   `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value ${cls}">${value}</div>${note ? `<div class="kpi-note">${note}</div>` : ''}</div>`;
 
-/** One card: Excel-style boxes → where the salary went → key rates. */
-function summaryCard(m, rangeLabel, comparable, homePot) {
+/** 1. Money left: the one number that matters, how much of the available money is spent. */
+function moneyLeftHero(m, subtitle, comparable) {
+  const spent = m.pool ? m.mySpent + m.homeSpent : m.mySpent;
+  const pct = m.myMoney > 0 ? Math.round((spent / m.myMoney) * 100) : null;
   const netSaved = m.saved - m.fromSavings;
   const rate = m.salary > 0 ? `${Math.round((netSaved / m.salary) * 100)}%` : '–';
-  const compare = m.change === null || !comparable ? ''
-    : `<span>My spending ${changeText(m.change, null)} than ${fmtDate(m.prevWindow.start)} – ${fmtDate(m.prevWindow.end)}</span>`;
+  return `
+    <section class="card hero an-hero">
+      <div class="row between wrap"><div class="label">${m.pool ? 'Money left' : 'My money left'}</div><span class="muted small">${subtitle}</span></div>
+      <div class="value ${m.myLeft < 0 ? 'bad' : ''}">${money(m.myLeft)}</div>
+      ${pct !== null ? `<div class="hero-bar" role="img" aria-label="${pct}% of available money spent"><div class="${m.myLeft < 0 ? 'over' : pct >= 80 ? 'warn' : ''}" style="width:${Math.min(100, pct)}%"></div></div>` : ''}
+      <div class="muted small">${pct !== null ? `<strong>${pct}%</strong> of available money spent · ` : ''}Available after savings ${money(m.myMoney)}</div>
+      <p class="small kpi-compare">Salary ${money(m.salary)} · Saved ${money(m.saved)} (${rate})${m.fromSavings ? ` · ${money(m.fromSavings)} taken back` : ''}${m.change !== null && comparable ? ` · My spend ${changeText(m.change, null)} than before` : ''}</p>
+    </section>`;
+}
+
+/** 2. My spend and Home spend side by side; the Home limit is visible straight away. */
+function spendSplitCards(m, budgets, homePot) {
+  const card = (label, spent, limit, limitLabel) => {
+    const over = limit > 0 && spent > limit;
+    const used = limit > 0 ? Math.min(100, (spent / limit) * 100) : 0;
+    return `
+      <section class="card split-card">
+        <div class="label">${label}</div>
+        <div class="value">${money(spent)}</div>
+        ${limit > 0 ? `<div class="hero-bar" role="img" aria-label="${Math.round((spent / limit) * 100)}% of ${limitLabel}"><div class="${over ? 'over' : used >= 80 ? 'warn' : ''}" style="width:${used}%"></div></div>
+        <div class="small">${over ? `<span class="bad">⛔ Over by ${money(spent - limit)}</span>` : `<span class="muted">${money(limit - spent)} left of ${limitLabel} ${money(limit)}</span>`}</div>` : '<div class="small muted">No budget set</div>'}
+      </section>`;
+  };
+  if (!m.pool) {
+    return `<div class="split-cards">${card('My spend', m.mySpent, m.myMoney, 'my money')}${card('Home spend', m.homeSpent, m.givenHome, 'money given home')}</div>`;
+  }
+  return `<div class="split-cards">
+    ${card('My spend', m.mySpent, budgets?.my ?? 0, 'my budgets')}
+    ${homePot || m.homeSpent ? card('Home spend', m.homeSpent, budgets?.home ?? 0, settings().homeLimitPaise > 0 ? 'home limit' : 'home budget') : ''}
+  </div>`;
+}
+
+/** 4. Category breakdown: problems first, with budget used, share and how often bought. */
+function categoryCard(rows, scope, comparable, homePot) {
+  const used = rows.filter((x) => !x.unused);
+  const unused = rows.filter((x) => x.unused);
+  const total = used.reduce((t, x) => t + x.spent, 0);
+  const row = (c) => {
+    const bar = c.budget ? Math.min(100, (c.spent / c.budget) * 100) : total ? (c.spent / total) * 100 : 0;
+    const homeTag = homePot && c.paidFrom === PAID_FROM.HOME ? ' <span class="tag">Home limit</span>' : '';
+    const details = [
+      c.budget ? `${money(c.spent)} of ${money(c.budget)} · ${Math.round((c.spent / c.budget) * 100)}% used` : money(c.spent),
+      total && c.spent ? `${Math.round((c.spent / total) * 100)}% of spending` : '',
+      c.count ? `${c.count}× · avg ${formatINR(Math.round(c.spent / c.count / 100) * 100)}` : '',
+    ].filter(Boolean).join(' · ');
+    return `
+      <div class="cat">
+        <div class="row between wrap">
+          <div><strong>${esc(c.name)}</strong>${homeTag}</div>
+          <div class="small">${c.budget ? STATUS[c.status](c) : `<strong>${money(c.spent)}</strong>`}</div>
+        </div>
+        <div class="track"><div class="fill ${c.budget ? c.status : ''}" style="width:${bar}%"></div></div>
+        <div class="row between small">
+          <span class="muted">${details}${comparable ? changeNote(c.change, 'vs before') : ''}</span>
+          ${c.spent ? `<button type="button" class="link-btn" data-see="${esc(c.name)}">Entries ›</button>` : ''}
+        </div>
+      </div>`;
+  };
+  const first = used.slice(0, 6);
+  const rest = used.slice(6);
   return `
     <section class="card">
-      <div class="row between wrap"><h3>Money summary</h3><span class="muted small">${rangeLabel}</span></div>
-      <div class="kpis">
-        ${kpi('Salary', money(m.salary), '', 'Money in')}
-        ${kpi('Saved', money(m.saved), '', m.fromSavings ? `${formatINR(m.fromSavings)} taken back` : '')}
-        ${!m.pool ? kpi('Given to Home', money(m.givenHome)) : ''}
-        ${m.pool
-          ? kpi('Total spent', money(m.mySpent + m.homeSpent), m.myLeft < 0 ? 'bad' : '', `of ${formatINR(m.myMoney)}${m.myMoney > 0 ? ` · ${Math.round(((m.mySpent + m.homeSpent) / m.myMoney) * 100)}%` : ''}`)
-          : kpi('My Money', money(m.myMoney), '', 'to spend')}
-        ${kpi(m.pool ? 'My spend' : 'My Spent', money(m.mySpent))}
-        ${m.pool && (homePot || m.homeSpent) ? kpi('Home spend', money(m.homeSpent)) : ''}
-        ${kpi(m.pool ? 'Money Left' : 'My Money Left', money(m.myLeft), m.myLeft < 0 ? 'bad' : 'good', m.myLeft < 0 ? 'overspent' : '')}
+      <div class="row between wrap">
+        <h3>Category breakdown</h3>
+        ${homePot ? `<div class="seg" role="group" aria-label="Which money">
+          ${SCOPES.map(([v, l]) => `<button type="button" data-scope="${v}" aria-pressed="${v === scope}">${l.replace(' money', '')}</button>`).join('')}
+        </div>` : ''}
       </div>
-      ${salarySplit(m)}
-      <div class="kpi-strip">
-        <span>Savings rate <strong>${rate}</strong></span>
-        <span>Average / day <strong>${money(m.avgPerDay)}</strong></span>
-        <span>${m.pool ? 'Money per day' : 'Daily limit'} <strong>${money(m.dailyLimit)}</strong></span>
-        ${homePot && !m.pool ? `<span>Home left <strong class="${m.homeLeft < 0 ? 'bad' : ''}">${money(m.homeLeft)}</strong></span>` : ''}
-        ${compare}
+      ${first.map(row).join('') || '<p class="muted">No spending in this range.</p>'}
+      ${rest.length ? `<details class="more"><summary>${rest.length} more categor${rest.length === 1 ? 'y' : 'ies'}</summary>${rest.map(row).join('')}</details>` : ''}
+      ${unused.length ? `<details class="more"><summary>${unused.length} unused budget${unused.length === 1 ? '' : 's'}</summary>${unused.map(row).join('')}</details>` : ''}
+    </section>`;
+}
+
+/** 6. Weekday habits: average spend per weekday as horizontal bars. */
+function weekdayCard(r, scopeLabel) {
+  const days = r.weekday;
+  const max = Math.max(...days.map((d) => d.avg ?? 0), 1);
+  const busiest = days.reduce((b, d) => ((d.avg ?? 0) > (b.avg ?? 0) ? d : b), days[0]);
+  return `
+    <section class="card">
+      <div class="row between wrap"><h3>Weekday habits</h3><span class="muted small">${scopeLabel} · average per day</span></div>
+      ${r.total ? `<p class="small kpi-compare">You spend most on <strong>${busiest.label}</strong> (average ${money(Math.round((busiest.avg ?? 0) / 100) * 100)}).</p>` : ''}
+      <div class="wk-rows">
+        ${days.map((d) => `
+          <div class="wk-row">
+            <span class="wk-day">${d.label}</span>
+            <div class="track"><div class="fill" style="width:${d.avg ? (d.avg / max) * 100 : 0}%"></div></div>
+            <span class="num wk-val">${d.avg === null ? '–' : formatINR(Math.round(d.avg / 100) * 100)}</span>
+          </div>`).join('')}
       </div>
     </section>`;
 }
 
-/** Stacked bar of how the salary was split. Colour is backed by a text label on every part. */
-function salarySplit(m) {
-  if (m.salary <= 0) return '<p class="muted small" style="margin:12px 0 0">Add your salary in Money In to see where it went.</p>';
-  const parts = [
-    { key: 's1', label: 'Saved', value: m.saved },
-    { key: 's2', label: m.pool ? 'Home spend' : 'Given to Home', value: m.pool ? m.homeSpent : m.givenHome },
-    { key: 's3', label: 'My spent', value: m.mySpent },
-    { key: 'left', label: 'Left', value: Math.max(0, m.myLeft) },
-  ].filter((p) => p.value > 0);
-  const total = parts.reduce((t, p) => t + p.value, 0);
-  const pct = (v) => Math.round((v / total) * 100);
+/** 8. Month-by-month story: one stacked bar per cycle (My spend · Home spend · Left), table folded. */
+function monthStoryCard(h) {
+  if (!h.rows.length) return '';
+  const rows = h.rows.map((x) => {
+    const available = x.received - x.saved + x.fromSavings;
+    const parts = [
+      { key: 's3', label: 'My spend', value: x.mySpent },
+      { key: 's2', label: 'Home', value: x.home },
+      { key: 'left', label: 'Left', value: Math.max(0, x.myLeft) },
+    ].filter((p) => p.value > 0);
+    const base = Math.max(available, parts.reduce((t, p) => t + p.value, 0), 1);
+    return `
+      <div class="story-row">
+        <div class="row between small"><strong>${fmtDate(x.period.start)} – ${fmtDate(x.period.end)}${x.current ? ' <span class="tag">now</span>' : ''}</strong>
+          <span class="${x.myLeft < 0 ? 'bad' : 'good'}">${x.myLeft < 0 ? `Over by ${money(-x.myLeft)}` : `Left ${money(x.myLeft)}`}</span></div>
+        <div class="split-bar story-bar" role="img" aria-label="${parts.map((p) => `${p.label} ${formatINR(p.value)}`).join(', ')}">
+          ${parts.map((p) => `<div class="seg-${p.key}" style="flex:${p.value}" title="${p.label}: ${formatINR(p.value)}"></div>`).join('')}
+          <div style="flex:${base - parts.reduce((t, p) => t + p.value, 0)}"></div>
+        </div>
+        <div class="muted small">My spend ${money(x.mySpent)} · Home ${money(x.home)} · Saved ${money(x.netSaved)}</div>
+      </div>`;
+  }).join('');
   return `
-    <h4 class="sub-title">Where your salary went</h4>
-    <div class="split-bar" role="img" aria-label="${parts.map((p) => `${p.label} ${pct(p.value)}%`).join(', ')}">
-      ${parts.map((p) => `<div class="seg-${p.key}" style="flex:${p.value}" title="${p.label}: ${formatINR(p.value)}"></div>`).join('')}
-    </div>
-    <ul class="split-legend">
-      ${parts.map((p) => `<li><span class="key seg-${p.key}"></span>${p.label}<strong>${money(p.value)}</strong><span class="muted">${pct(p.value)}%</span></li>`).join('')}
-    </ul>
-    ${m.fromSavings ? `<p class="muted small" style="margin:8px 0 0">Includes ${formatINR(m.fromSavings)} taken back from savings.</p>` : ''}
-    ${m.myLeft < 0 ? `<p class="small bad" style="margin:8px 0 0">⛔ Overspent by ${money(-m.myLeft)} – more than your money for this range.</p>` : ''}`;
+    <section class="card">
+      <div class="row between wrap"><h3>Month by month</h3><span class="small">Total saved <strong>${money(h.allTimeSaved)}</strong></span></div>
+      <p class="muted small legend"><span class="key bar-key seg-s3"></span>My spend <span class="key bar-key seg-s2"></span>Home <span class="key bar-key seg-left"></span>Left</p>
+      ${rows}
+      <details class="more"><summary>Show table</summary>${monthTable(h)}</details>
+    </section>`;
+}
+
+function monthTable(h) {
+  const t = h.rows.reduce((acc, x) => ({
+    received: acc.received + x.received, saved: acc.saved + x.saved, home: acc.home + x.home,
+    mySpent: acc.mySpent + x.mySpent, myLeft: acc.myLeft + x.myLeft,
+  }), { received: 0, saved: 0, home: 0, mySpent: 0, myLeft: 0 });
+  const cells = (x) => `<td class="num">${formatINR(x.received)}</td><td class="num">${formatINR(x.saved)}</td><td class="num">${formatINR(x.home)}</td>
+    <td class="num">${formatINR(x.mySpent)}</td><td class="num ${x.myLeft < 0 ? 'bad' : ''}">${formatINR(x.myLeft)}</td>`;
+  return `
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Period</th><th>Salary</th><th>Saved</th><th>Home</th><th>My spend</th><th>Left</th></tr></thead>
+      <tbody>${h.rows.map((x) => `<tr><td>${fmtDate(x.period.start)}${x.current ? ' <span class="tag">now</span>' : ''}</td>${cells(x)}</tr>`).join('')}</tbody>
+      ${h.rows.length > 1 ? `<tfoot><tr><th>Total</th>${cells(t).replace(/<td/g, '<th').replace(/<\/td>/g, '</th>')}</tr></tfoot>` : ''}
+    </table></div>`;
+}
+
+/** 9. One useful budget suggestion (never changes anything by itself); all suggestions folded. */
+function suggestionCard(review) {
+  const order = { raise: 0, set: 1, lower: 2 };
+  const best = review.rows.filter((x) => x.suggestion.type in order)
+    .sort((a, b) => order[a.suggestion.type] - order[b.suggestion.type] || Math.abs(b.avg - b.budget) - Math.abs(a.avg - a.budget))[0];
+  let text;
+  if (!review.periods.length) text = `Budget suggestions start after your first full month ends (${fmtDate(review.firstFullEnd, true)}).`;
+  else if (!best) text = 'Your budgets match how you actually spend. Nothing to change.';
+  else {
+    const verb = { raise: 'usually goes over – consider', set: 'has no budget – consider', lower: 'usually stays well under – you could lower it to' }[best.suggestion.type];
+    text = `<strong>${esc(best.name)}</strong> ${verb} <strong>${money(best.suggestion.value)}/month</strong>${best.budget ? ` (now ${money(best.budget)}, average ${money(best.avg)})` : ` (average ${money(best.avg)})`}.`;
+  }
+  return `
+    <section class="card insight">
+      <div class="row" style="align-items:flex-start;gap:12px"><span class="ins-icon">${icon('info')}</span>
+        <div><h3>One useful budget adjustment</h3><p class="small" style="margin:6px 0 0">${text}</p>
+        <p class="muted small" style="margin:4px 0 0">Change budgets yourself in Settings – the app never changes them automatically.</p></div>
+      </div>
+      ${review.periods.length ? `<details class="more"><summary>See all suggestions</summary>${budgetReviewCard(review)}</details>` : ''}
+    </section>`;
 }
 
 /** Biggest increases and decreases by category vs the previous range. */
@@ -615,120 +742,24 @@ function changesCard(r, comparable, scopeLabel) {
     </section>`;
 }
 
-/** How often you buy each thing: times · average · total. */
-function habitsCard(rows, scopeLabel) {
-  const title = `<div class="row between wrap"><h3>Spending habits</h3><span class="muted small">${scopeLabel}</span></div>`;
-  if (!rows.length) return `<section class="card">${title}<p class="muted">No spending in this range.</p></section>`;
-  const max = Math.max(...rows.map((x) => x.total), 1);
-  return `
-    <section class="card">${title}
-      <div class="table-wrap"><table class="table habits">
-        <thead><tr><th>Category</th><th>Times</th><th>Average</th><th>Total</th></tr></thead>
-        <tbody>${rows.slice(0, 8).map((x) => `
-          <tr><td>${esc(x.name)}<div class="mini-track"><div class="fill" style="width:${(x.total / max) * 100}%"></div></div></td>
-            <td class="num">${x.count}</td><td class="num">${formatINR(Math.round(x.avg / 100) * 100)}</td><td class="num">${formatINR(x.total)}</td></tr>`).join('')}
-        </tbody></table></div>
-      ${rows.length > 8 ? `<p class="muted small" style="margin:8px 0 0">+ ${rows.length - 8} more categories</p>` : ''}
-    </section>`;
-}
-
-/** Cumulative savings line over the periods, with the total as headline. */
-function renderSavingsChart(h) {
-  const el = $('#an-savings');
-  fitChart(el);
-  const title = `<div class="row between wrap"><h3>Savings</h3><span class="small">Total saved <strong>${money(h.allTimeSaved)}</strong></span></div>`;
-  if (!h.rows.length) {
-    el.innerHTML = `${title}<p class="muted">Add Saved entries in Money In to track your savings.</p>`;
-    return;
-  }
-  let running = 0;
-  const points = h.rows.map((x) => ({ ...x, total: (running += x.netSaved) }));
-  const g = chartGeometry(points.length, Math.max(...points.map((p) => p.total), 1));
-  const line = points.length > 1 ? `<polyline class="line" points="${points.map((p, i) => `${g.cx(i)},${g.y(p.total)}`).join(' ')}"/>` : '';
-  const dots = points.map((p, i) => `<circle class="dot mark last" data-i="${i}" cx="${g.cx(i)}" cy="${g.y(p.total)}" r="4"/>`).join('');
-  const labels = points.map((p, i) => axisLabel('middle', g.cx(i), monthFmt.format(new Date(p.period.start + 'T00:00:00Z')))).join('');
-  const rate = (p) => (p.received > 0 ? `${Math.round((p.netSaved / p.received) * 100)}%` : '–');
-  el.innerHTML = `${title}
-    <p class="muted small legend"><span class="key line-key"></span>total saved so far</p>
-    <p class="small readout" aria-live="polite"></p>
-    <svg viewBox="0 0 ${CHART.W} ${CHART.H}" role="img" aria-label="Savings grew to ${formatINR(running)}">${line}${dots}${labels}${g.hits}</svg>
-    <p class="small kpi-compare">${points.map((p) => `${monthFmt.format(new Date(p.period.start + 'T00:00:00Z'))}: <strong>${money(p.netSaved)}</strong> (${rate(p)} of salary)`).join(' · ')}</p>`;
-  bindHover(el, (i) => {
-    const p = points[i];
-    return `${fmtDate(p.period.start)} – ${fmtDate(p.period.end)}: saved ${money(p.netSaved)} (${rate(p)} of salary) · total ${money(p.total)}`;
-  }, 'Tap a month for details.');
-}
-
-/** Excel-style category table: spent vs budget, biggest first; unused budgets folded away. */
-function categoryTableCard(rows, scope, comparable, homePot) {
-  const used = rows.filter((x) => !x.unused).sort((a, b) => b.spent - a.spent);
-  const unused = rows.filter((x) => x.unused);
-  const total = used.reduce((t, x) => t + x.spent, 0);
-  const row = (c) => {
-    const bar = c.budget ? Math.min(100, (c.spent / c.budget) * 100) : total ? (c.spent / total) * 100 : 0;
-    return `
-      <div class="cat">
-        <div class="row between wrap">
-          <div><strong>${esc(c.name)}</strong> ${scope === 'all' && c.paidFrom === PAID_FROM.HOME ? '<span class="tag">Home</span>' : ''}</div>
-          <div class="small">${c.budget ? STATUS[c.status](c) : `<strong>${money(c.spent)}</strong>`}</div>
-        </div>
-        <div class="track"><div class="fill ${c.budget ? c.status : ''}" style="width:${bar}%"></div></div>
-        <div class="row between small">
-          <span class="muted">${money(c.spent)}${c.budget ? ` of ${money(c.budget)}` : ''}${total && c.spent ? ` · ${Math.round((c.spent / total) * 100)}% of spending` : ''}${comparable ? changeNote(c.change, 'vs before') : ''}</span>
-          ${c.spent ? `<button type="button" class="link-btn" data-see="${esc(c.name)}">Entries ›</button>` : ''}
-        </div>
-      </div>`;
-  };
-  return `
-    <section class="card">
-      <div class="row between wrap">
-        <h3>Spending by category</h3>
-        ${homePot ? `<div class="seg" role="group" aria-label="Which money">
-          ${SCOPES.map(([v, l]) => `<button type="button" data-scope="${v}" aria-pressed="${v === scope}">${l.replace(' money', '')}</button>`).join('')}
-        </div>` : ''}
-      </div>
-      ${used.map(row).join('') || '<p class="muted">No spending in this range.</p>'}
-      ${unused.length ? `<details class="more"><summary>Show ${unused.length} unused categor${unused.length === 1 ? 'y' : 'ies'}</summary>${unused.map(row).join('')}</details>` : ''}
-    </section>`;
-}
-
-/** Period-by-period table, like the summary block of each Excel tab (always all recent periods). */
-function monthTableCard(h) {
-  if (!h.rows.length) return '';
-  const t = h.rows.reduce((acc, x) => ({
-    received: acc.received + x.received, saved: acc.saved + x.saved, home: acc.home + x.home,
-    mySpent: acc.mySpent + x.mySpent, myLeft: acc.myLeft + x.myLeft,
-  }), { received: 0, saved: 0, home: 0, mySpent: 0, myLeft: 0 });
-  const cells = (x) => `<td class="num">${formatINR(x.received)}</td><td class="num">${formatINR(x.saved)}</td><td class="num">${formatINR(x.home)}</td>
-    <td class="num">${formatINR(x.mySpent)}</td><td class="num ${x.myLeft < 0 ? 'bad' : ''}">${formatINR(x.myLeft)}</td>`;
-  return `
-    <section class="card">
-      <div class="row between wrap"><h3>Month by month</h3><span class="muted small">All periods</span></div>
-      <div class="table-wrap"><table class="table">
-        <thead><tr><th>Period</th><th>Salary</th><th>Saved</th><th>Home</th><th>Spent</th><th>Left</th></tr></thead>
-        <tbody>${h.rows.map((x) => `<tr><td>${fmtDate(x.period.start)}${x.current ? ' <span class="tag">now</span>' : ''}</td>${cells(x)}</tr>`).join('')}</tbody>
-        ${h.rows.length > 1 ? `<tfoot><tr><th>Total</th>${cells(t).replace(/<td/g, '<th').replace(/<\/td>/g, '</th>')}</tr></tfoot>` : ''}
-      </table></div>
-      <p class="muted small" style="margin:8px 0 0">Home = home spending (or money given home in older months). Spent = my spending. Left = what was not spent. Current period: so far.</p>
-    </section>`;
-}
-
-/** "Spending over time" card: daily bars (short ranges) or one bar per period; or average by weekday. */
-function renderTimeChart(r, m, range) {
+/** 3. Daily spending pace: daily bars with the plan line, or the running total vs plan; one bar per month for long ranges. */
+function renderTimeChart(r, m, range, budgets) {
   const el = $('#an-time');
   fitChart(el);
   const a = state.analytics;
+  const short = r.calendar && daysBetween(range.start, range.end) < 62;
+  const mode = a.timeView === 'running' ? 'running' : 'daily';
   const header = `
     <div class="row between wrap">
-      <h3>Spending over time</h3>
-      <div class="seg" role="group" aria-label="Chart view">
-        <button type="button" data-tv="time" aria-pressed="${a.timeView === 'time'}">Over time</button>
-        <button type="button" data-tv="weekday" aria-pressed="${a.timeView === 'weekday'}">By weekday</button>
-      </div>
+      <h3>${short ? 'Daily spending pace' : 'Spending by month'}</h3>
+      ${short ? `<div class="seg" role="group" aria-label="Chart view">
+        <button type="button" data-tv="daily" aria-pressed="${mode === 'daily'}">Daily</button>
+        <button type="button" data-tv="running" aria-pressed="${mode === 'running'}">Running total</button>
+      </div>` : ''}
     </div>`;
   const bind = () => el.querySelectorAll('[data-tv]').forEach((b) => b.addEventListener('click', () => {
     a.timeView = b.dataset.tv;
-    renderTimeChart(r, m, range);
+    renderTimeChart(r, m, range, budgets);
   }));
   if (!r.total) {
     el.innerHTML = `${header}<p class="muted">No spending in this range.</p>`;
@@ -738,52 +769,58 @@ function renderTimeChart(r, m, range) {
   const scopeNote = SCOPES.find(([v]) => v === a.scope)[1].toLowerCase();
   let svg, describe, summary, legend;
 
-  if (a.timeView === 'weekday') {
-    const days = r.weekday;
-    const g = chartGeometry(7, Math.max(...days.map((d) => d.avg ?? 0), 1));
-    const barW = Math.min(36, g.slot - 10);
-    const marks = days.map((d, i) => roundedBar(g.cx(i) - barW / 2, g.base, barW, g.base - g.y(d.avg ?? 0), i) + axisLabel('middle', g.cx(i), d.label)).join('');
-    const busiest = days.reduce((b, d) => ((d.avg ?? 0) > (b.avg ?? 0) ? d : b), days[0]);
-    svg = `<svg viewBox="0 0 ${CHART.W} ${CHART.H}" role="img" aria-label="Average spending per weekday; highest on ${busiest.label}">${marks}${g.hits}</svg>`;
-    legend = `<span class="key bar-key"></span>average per day (${scopeNote})`;
-    summary = `You spend most on <strong>${busiest.label}</strong> (average ${money(busiest.avg ?? 0)}). Tap a day for details.`;
-    describe = (i) => {
-      const d = days[i];
-      return d.count ? `${d.label}: average ${money(d.avg)} per day (${d.count} day${d.count === 1 ? '' : 's'}, total ${money(d.total)})` : `${d.label}: none in this range yet`;
-    };
-  } else if (r.calendar && daysBetween(range.start, range.end) < 62) {
+  if (short) {
     // Whole range on the axis; days still to come show as empty.
     const days = [...r.calendar];
     for (let d = addDays(days.at(-1).date, 1); d <= range.end; d = addDays(d, 1)) days.push({ date: d, spent: 0 });
-    const limit = a.scope === 'me' && range.periods === 1 ? m.dailyLimit : 0;
-    const g = chartGeometry(days.length, Math.max(limit, ...days.map((d) => d.spent), 1));
-    const barW = Math.max(2, g.slot - 2);
-    const bars = days.map((d, i) => roundedBar(g.x(i) + (g.slot - barW) / 2, g.base, barW, g.base - g.y(d.spent), i)).join('');
-    const ly = g.y(limit);
-    const line = limit > 0 ? `<line class="limit" x1="${CHART.left}" x2="${CHART.W - CHART.right}" y1="${ly}" y2="${ly}"/>` : '';
-    svg = `<svg viewBox="0 0 ${CHART.W} ${CHART.H}" role="img" aria-label="Spending per day">${line}${bars}${dayLabels(days, g)}${g.hits}</svg>`;
-    legend = `<span class="key bar-key"></span>spent that day (${scopeNote})${limit ? ' <span class="key plan-key"></span>daily limit' : ''}`;
-    const top = days.reduce((b, d) => (d.spent > b.spent ? d : b), days[0]);
-    summary = `Biggest day: <strong>${fmtDate(top.date, true)}</strong> (${money(top.spent)}). Tap a day for details.`;
-    describe = (i) => `${fmtDate(days[i].date, true)}: spent ${money(days[i].spent)}${limit && days[i].spent > limit ? ' · <span class="warn">⚠ above daily limit</span>' : ''}`;
+    // Plan per day = my budgets spread over the period (my money in older two-pot months); only for my spending in one period.
+    const planTotal = a.scope === 'me' && range.periods === 1 ? (m.pool ? budgets?.my ?? 0 : m.myMoney) : 0;
+    const limit = planTotal / days.length;
+    const today = todayISO();
+    const lastIndex = days.findLastIndex((d) => d.date <= today);
+    if (mode === 'running') {
+      let run = 0;
+      const running = days.map((d) => (run += d.spent));
+      const g = chartGeometry(days.length, Math.max(planTotal, run, 1));
+      const plan = limit > 0 ? `<polyline class="plan" points="${days.map((_, i) => `${g.cx(i)},${g.y(limit * (i + 1))}`).join(' ')}"/>` : '';
+      const shown = days.slice(0, lastIndex + 1);
+      const line = shown.length ? `<polyline class="line" points="${shown.map((_, i) => `${g.cx(i)},${g.y(running[i])}`).join(' ')}"/>` : '';
+      const dots = shown.map((_, i) => `<circle class="dot mark${i === lastIndex ? ' last' : ''}" data-i="${i}" cx="${g.cx(i)}" cy="${g.y(running[i])}" r="4"/>`).join('');
+      svg = `<svg viewBox="0 0 ${CHART.W} ${CHART.H}" role="img" aria-label="Running total of spending">${plan}${line}${dots}${dayLabels(days, g)}${g.hits}</svg>`;
+      legend = `<span class="key line-key"></span>running total (${scopeNote})${limit ? ' <span class="key plan-key"></span>plan' : ''}`;
+      summary = `Spent ${money(running[Math.max(0, lastIndex)])} so far. Tap a day for details.`;
+      describe = (i) => `${fmtDate(days[i].date, true)}: total so far ${money(running[i])}${limit ? ` · plan ${money(limit * (i + 1))}` : ''}`;
+    } else {
+      const g = chartGeometry(days.length, Math.max(limit, ...days.map((d) => d.spent), 1));
+      const barW = Math.max(2, g.slot - 2);
+      const bars = days.map((d, i) => roundedBar(g.x(i) + (g.slot - barW) / 2, g.base, barW, g.base - g.y(d.spent), i)).join('');
+      const ly = g.y(limit);
+      const line = limit > 0 ? `<line class="limit" x1="${CHART.left}" x2="${CHART.W - CHART.right}" y1="${ly}" y2="${ly}"/>` : '';
+      svg = `<svg viewBox="0 0 ${CHART.W} ${CHART.H}" role="img" aria-label="Spending per day">${line}${bars}${dayLabels(days, g)}${g.hits}</svg>`;
+      legend = `<span class="key bar-key"></span>spent that day (${scopeNote})${limit ? ` <span class="key plan-key"></span>plan ${money(limit)}/day` : ''}`;
+      const top = days.reduce((b, d) => (d.spent > b.spent ? d : b), days[0]);
+      summary = `Biggest day: <strong>${fmtDate(top.date, true)}</strong> (${money(top.spent)}). Tap a day for details.`;
+      describe = (i) => `${fmtDate(days[i].date, true)}: spent ${money(days[i].spent)}${limit && days[i].spent > limit ? ' · <span class="warn">⚠ above plan</span>' : ''}`;
+    }
   } else {
     const s = settings();
     const periods = [];
     for (let p = periodFor(range.start, s.periodStartDay); p.start <= range.end; p = shiftPeriod(p, 1, s.periodStartDay)) periods.push(p);
     const rows = periods.map((p) => ({ period: p, ...moneySummary(state.data.transactions, s, p, todayISO()) }));
-    const g = chartGeometry(rows.length, Math.max(...rows.map((x) => Math.max(x.myMoney, x.mySpent)), 1));
+    const spentOf = (x) => (x.pool ? x.mySpent + x.homeSpent : x.mySpent);
+    const g = chartGeometry(rows.length, Math.max(...rows.map((x) => Math.max(x.myMoney, spentOf(x))), 1));
     const barW = Math.min(40, g.slot - 8);
     const marks = rows.map((x, i) => {
       const bx = g.cx(i) - barW / 2;
       const tick = x.myMoney > 0 ? `<line class="money-tick" x1="${bx - 3}" x2="${bx + barW + 3}" y1="${g.y(x.myMoney)}" y2="${g.y(x.myMoney)}"/>` : '';
-      return roundedBar(bx, g.base, barW, g.base - g.y(x.mySpent), i) + tick + axisLabel('middle', g.cx(i), monthFmt.format(new Date(x.period.start + 'T00:00:00Z')));
+      return roundedBar(bx, g.base, barW, g.base - g.y(spentOf(x)), i) + tick + axisLabel('middle', g.cx(i), monthFmt.format(new Date(x.period.start + 'T00:00:00Z')));
     }).join('');
-    svg = `<svg viewBox="0 0 ${CHART.W} ${CHART.H}" role="img" aria-label="My spending per period compared with my money">${marks}${g.hits}</svg>`;
-    legend = '<span class="key bar-key"></span>my spending <span class="key tick-key"></span>my money';
-    summary = 'One bar per period. Tap a bar for details.';
+    svg = `<svg viewBox="0 0 ${CHART.W} ${CHART.H}" role="img" aria-label="Spending per month compared with the money available">${marks}${g.hits}</svg>`;
+    legend = '<span class="key bar-key"></span>spent <span class="key tick-key"></span>money available';
+    summary = 'One bar per month. Tap a bar for details.';
     describe = (i) => {
       const x = rows[i];
-      return `${fmtDate(x.period.start)} – ${fmtDate(x.period.end)}: spent ${money(x.mySpent)} of ${money(x.myMoney)}`
+      return `${fmtDate(x.period.start)} – ${fmtDate(x.period.end)}: spent ${money(spentOf(x))} of ${money(x.myMoney)}`
         + (x.myLeft >= 0 ? ` · <span class="good">${money(x.myLeft)} left</span>` : ` · <span class="warn">${money(-x.myLeft)} over</span>`);
     };
   }

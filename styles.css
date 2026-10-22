@@ -368,3 +368,34 @@ button:focus-visible, a:focus-visible, .chip:focus-within span, summary:focus-vi
   .dash-grid.reorder .dash-col > * { margin-top: 0 !important; }
 }
 .money-sum { margin: 8px 0 0; color: var(--text-2); line-height: 1.6; }
+
+/* ---------- Analytics v3 (ChatGPT layout) ---------- */
+.range-bar { display: flex; flex-direction: column; gap: 10px; }
+.range-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.range-chip {
+  padding: 7px 14px; min-height: 38px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-2); font-size: 0.875rem; font-weight: 500; cursor: pointer;
+}
+.range-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.range-bar .an-controls { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+.split-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.split-card .label { color: var(--muted); font-size: 0.82rem; font-weight: 500; }
+.split-card .value { font-size: 1.35rem; font-weight: 700; margin-top: 2px; }
+@media (min-width: 720px) { .split-card .value { font-size: 1.6rem; } }
+.split-card .hero-bar { margin: 10px 0 6px; }
+.wk-rows { margin-top: 10px; display: grid; gap: 8px; }
+.wk-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) 64px; align-items: center; gap: 10px; font-size: 0.85rem; }
+.wk-row .track { margin: 0; height: 8px; }
+.wk-day { color: var(--text-2); font-weight: 500; }
+.wk-val { text-align: right; color: var(--text-2); }
+.story-row { padding: 10px 0; border-top: 1px solid var(--border); }
+.story-row:first-of-type { border-top: 0; }
+.story-bar { height: 16px; margin: 6px 0 4px; background: var(--track); }
+.legend .key.bar-key.seg-s2 { background: var(--series-2); }
+.legend .key.bar-key.seg-s3 { background: var(--series-3); }
+.legend .key.bar-key.seg-left { background: var(--track); border: 1px solid var(--border); }
+.insight { background: var(--accent-soft); border-color: transparent; }
+.insight .ins-icon { background: var(--surface); }
+.an-hero .value { font-size: 2.4rem; }
+.an-controls[hidden] { display: none; }
+.link-btn { white-space: nowrap; }

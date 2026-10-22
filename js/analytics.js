@@ -278,3 +278,27 @@ export function homeBreakdown(transactions, settings, range) {
     && paidFromFor(tx.category, settings) === PAID_FROM.ME));
   return { rows, switched };
 }
+
+/**
+ * Category rows for the Analytics breakdown: budget rows plus how many times each was bought,
+ * problems first (over budget, then near limit), then by amount.
+ */
+export function categoryBreakdownRows(analysis, frequency, settings, scope) {
+  const counts = new Map(frequency.map((f) => [f.name, f.count]));
+  const rank = { over: 0, warn: 1 };
+  return categoryBudgetRows(analysis, settings, scope)
+    .map((r) => ({ ...r, count: counts.get(r.name) ?? 0 }))
+    .sort((a, b) => (rank[a.status] ?? 2) - (rank[b.status] ?? 2) || b.spent - a.spent);
+}
+
+/**
+ * Budgets for a range: my categories' budgets and the home limit (or home categories' budgets),
+ * times the number of periods that have entries. null for year/custom ranges (no fixed number of periods).
+ */
+export function rangeBudgets(analysis, settings) {
+  const periods = analysis.range.periods ? Math.max(1, Math.min(analysis.range.periods, analysis.periodsWithData)) : null;
+  if (!periods) return null;
+  const sumOf = (pot) => settings.categories.filter((c) => c.paidFrom === pot).reduce((t, c) => t + c.budgetPaise, 0);
+  const home = settings.homeLimitPaise > 0 ? settings.homeLimitPaise : sumOf(PAID_FROM.HOME);
+  return { my: sumOf(PAID_FROM.ME) * periods, home: home * periods, periods };
+}
