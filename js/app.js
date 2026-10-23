@@ -290,15 +290,19 @@ function categoriesCard(d, compare) {
 function categoryRow(c, total, note = '') {
   const pct = c.ratio === null ? 0 : Math.min(100, c.ratio * 100);
   const share = total > 0 && c.spent > 0 ? ` · ${Math.round((c.spent / total) * 100)}% of spending` : '';
+  const limit = c.inHomeLimit ? settings().homeLimitPaise : 0; // home categories: measured against the one home limit
+  const limitPct = limit ? (c.spent / limit) * 100 : 0;
   return `
     <div class="cat">
       <div class="row between wrap">
         <div><strong>${esc(c.name)}</strong> ${c.paidFrom === PAID_FROM.HOME ? '<span class="tag">Home</span>' : ''}${c.removed ? ' <span class="tag">Removed</span>' : ''}</div>
         <div class="small">${c.inHomeLimit ? '<span class="muted">Part of home limit</span>' : STATUS[c.status](c)}</div>
       </div>
-      ${c.budget ? `<div class="track" role="img" aria-label="${Math.round(c.ratio * 100)}% of budget used"><div class="fill ${c.status}" style="width:${pct}%"></div></div>` : ''}
+      ${c.budget ? `<div class="track" role="img" aria-label="${Math.round(c.ratio * 100)}% of budget used"><div class="fill ${c.status}" style="width:${pct}%"></div></div>`
+        : limit ? `<div class="track" role="img" aria-label="${Math.round(limitPct)}% of the home limit"><div class="fill" style="width:${Math.min(100, limitPct)}%"></div></div>`
+          : c.spent && total ? `<div class="track" role="img" aria-label="${Math.round((c.spent / total) * 100)}% of spending"><div class="fill share" style="width:${(c.spent / total) * 100}%"></div></div>` : ''}
       <div class="row between small">
-        <span class="muted">${money(c.spent)}${c.budget ? ` of ${money(c.budget)}` : ''}${share}${note}</span>
+        <span class="muted">${money(c.spent)}${c.budget ? ` of ${money(c.budget)}` : limit ? ` of home limit ${money(limit)} · ${Math.round(limitPct)}%` : ''}${share}${note}</span>
         ${c.spent ? `<button type="button" class="link-btn" data-see="${esc(c.name)}">Entries ›</button>` : ''}
       </div>
     </div>`;
@@ -506,7 +510,7 @@ function renderAnalyticsBody() {
     ${spendSplitCards(m, budgets, homePot)}
     <div class="dash-grid an-grid">
       <div class="dash-col"><section class="card chart" id="an-time"></section></div>
-      <div class="dash-col">${categoryCard(categoryBreakdownRows(r, categoryFrequency(state.data.transactions, s, range, a.scope), s, a.scope), a.scope, comparable, homePot)}</div>
+      <div class="dash-col">${categoryCard(categoryBreakdownRows(r, categoryFrequency(state.data.transactions, s, range, a.scope), s, a.scope), a.scope, comparable, homePot, s.homeLimitPaise > 0 ? budgets?.home ?? 0 : 0)}</div>
     </div>
     <div class="dash-grid an-grid">
       <div class="dash-col"><section class="card" id="an-calendar"></section></div>
@@ -593,15 +597,17 @@ function spendSplitCards(m, budgets, homePot) {
 }
 
 /** 4. Category breakdown: problems first, with budget used, share and how often bought. */
-function categoryCard(rows, scope, comparable, homePot) {
+function categoryCard(rows, scope, comparable, homePot, homeLimit = 0) {
   const used = rows.filter((x) => !x.unused);
   const unused = rows.filter((x) => x.unused);
   const total = used.reduce((t, x) => t + x.spent, 0);
   const row = (c) => {
-    const bar = c.budget ? Math.min(100, (c.spent / c.budget) * 100) : total ? (c.spent / total) * 100 : 0;
+    const limit = c.inHomeLimit ? homeLimit : 0; // home categories: measured against the home limit for the range
+    const bar = c.budget ? Math.min(100, (c.spent / c.budget) * 100) : limit ? Math.min(100, (c.spent / limit) * 100) : total ? (c.spent / total) * 100 : 0;
     const homeTag = homePot && c.paidFrom === PAID_FROM.HOME ? ' <span class="tag">Home limit</span>' : '';
     const details = [
-      c.budget ? `${money(c.spent)} of ${money(c.budget)} · ${Math.round((c.spent / c.budget) * 100)}% used` : money(c.spent),
+      c.budget ? `${money(c.spent)} of ${money(c.budget)} · ${Math.round((c.spent / c.budget) * 100)}% used`
+        : limit ? `${money(c.spent)} of home limit ${money(limit)} · ${Math.round((c.spent / limit) * 100)}%` : money(c.spent),
       total && c.spent ? `${Math.round((c.spent / total) * 100)}% of spending` : '',
       c.count ? `${c.count}× · avg ${formatINR(Math.round(c.spent / c.count / 100) * 100)}` : '',
     ].filter(Boolean).join(' · ');
@@ -611,7 +617,7 @@ function categoryCard(rows, scope, comparable, homePot) {
           <div><strong>${esc(c.name)}</strong>${homeTag}</div>
           <div class="small">${c.budget ? STATUS[c.status](c) : `<strong>${money(c.spent)}</strong>`}</div>
         </div>
-        <div class="track"><div class="fill ${c.budget ? c.status : ''}" style="width:${bar}%"></div></div>
+        <div class="track"><div class="fill ${c.budget ? c.status : limit ? '' : 'share'}" style="width:${bar}%"></div></div>
         <div class="row between small">
           <span class="muted">${details}${comparable ? changeNote(c.change, 'vs before') : ''}</span>
           ${c.spent ? `<button type="button" class="link-btn" data-see="${esc(c.name)}">Entries ›</button>` : ''}

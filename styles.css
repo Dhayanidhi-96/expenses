@@ -399,3 +399,4 @@ button:focus-visible, a:focus-visible, .chip:focus-within span, summary:focus-vi
 .an-hero .value { font-size: 2.4rem; }
 .an-controls[hidden] { display: none; }
 .link-btn { white-space: nowrap; }
+.fill.share { background: var(--muted); opacity: 0.45; }
