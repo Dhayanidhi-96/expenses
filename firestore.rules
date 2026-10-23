@@ -14,7 +14,7 @@ service cloud.firestore {
         && d.note is string && d.note.size() <= 200
         && ((d.kind == 'moneyIn' && d.type in ['Money In', 'Saved', 'Given to Home', 'Taken from Savings'])
             || (d.kind == 'expense' && d.category is string && d.category.size() > 0 && d.paidBy is string
-                && (!('paidFrom' in d) || d.paidFrom in ['Me', 'Home money'])));
+                && (!('paidFrom' in d) || d.paidFrom in ['Me', 'Home money', 'Savings'])));
     }
 
     match /users/{uid}/transactions/{id} {

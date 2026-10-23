@@ -1,5 +1,5 @@
 // Pure calculations. Every total, card and chart on screen comes from here.
-import { KIND, PAID_FROM, MONEY_TYPE } from './model.js';
+import { KIND, PAID_FROM, PAID_FROM_LIST, MONEY_TYPE } from './model.js';
 import { formatINR } from './money.js';
 
 const DAY_MS = 86_400_000;
@@ -54,7 +54,7 @@ export function paidFromFor(category, settings) {
 
 /** Pot an expense is paid from: the choice saved on the entry, else its category's usual pot (older entries). */
 export function txPaidFrom(tx, settings) {
-  return tx.paidFrom === PAID_FROM.ME || tx.paidFrom === PAID_FROM.HOME ? tx.paidFrom : paidFromFor(tx.category, settings);
+  return PAID_FROM_LIST.includes(tx.paidFrom) ? tx.paidFrom : paidFromFor(tx.category, settings);
 }
 
 const sum = (txs) => txs.reduce((total, tx) => total + tx.amountPaise, 0);
@@ -75,7 +75,8 @@ export function dashboard(transactions, settings, period, today) {
 
   const myExpenses = expenses.filter(isMine);
   const mySpent = sum(myExpenses);
-  const homeSpent = sum(expenses.filter((tx) => !isMine(tx)));
+  const homeSpent = sum(expenses.filter((tx) => txPaidFrom(tx, settings) === PAID_FROM.HOME));
+  const savingsSpent = sum(expenses.filter((tx) => txPaidFrom(tx, settings) === PAID_FROM.SAVINGS)); // lowers Saved, not the month's money
 
   const daysInPeriod = daysBetween(period.start, period.end) + 1;
   const lastCounted = today < period.end ? today : period.end;
@@ -106,7 +107,8 @@ export function dashboard(transactions, settings, period, today) {
     saved,
     givenHome,
     fromSavings,
-    netSaved: saved - fromSavings,
+    savingsSpent,
+    netSaved: saved - fromSavings - savingsSpent,
     myMoney,
     mySpent,
     myLeft,

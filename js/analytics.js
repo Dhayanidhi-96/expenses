@@ -57,8 +57,7 @@ function comparisonWindow(transactions, range, today, startDay) {
 export function inScope(tx, scope, settings) {
   if (tx.kind !== KIND.EXPENSE) return false;
   if (scope === 'all') return true;
-  const mine = txPaidFrom(tx, settings) === PAID_FROM.ME;
-  return scope === 'me' ? mine : !mine;
+  return txPaidFrom(tx, settings) === (scope === 'me' ? PAID_FROM.ME : PAID_FROM.HOME);
 }
 
 /** Everything for the selected range and scope. */
@@ -193,7 +192,8 @@ export function savingsHistory(transactions, settings, today, count = 6) {
     rows.push({ period: p, current: i === 0, received: d.received, saved: d.saved, givenHome: d.givenHome, home: d.pool ? d.homeSpent : d.givenHome, fromSavings: d.fromSavings, netSaved: d.netSaved, myMoney: d.myMoney, mySpent: d.mySpent, myLeft: d.myLeft });
   }
   const moneyIn = transactions.filter((tx) => tx.kind === KIND.MONEY_IN);
-  const allTimeSaved = sum(moneyIn.filter((tx) => tx.type === MONEY_TYPE.SAVED)) - sum(moneyIn.filter((tx) => tx.type === MONEY_TYPE.FROM_SAVINGS));
+  const spentFromSavings = sum(transactions.filter((tx) => tx.kind === KIND.EXPENSE && txPaidFrom(tx, settings) === PAID_FROM.SAVINGS));
+  const allTimeSaved = sum(moneyIn.filter((tx) => tx.type === MONEY_TYPE.SAVED)) - sum(moneyIn.filter((tx) => tx.type === MONEY_TYPE.FROM_SAVINGS)) - spentFromSavings;
   return { rows, allTimeSaved };
 }
 
@@ -223,6 +223,7 @@ export function moneySummary(transactions, settings, range, today) {
   const pool = givenHome === 0; // one pot: home spending also comes out of the month's money
   return {
     salary, saved, givenHome, fromSavings, myMoney, mySpent, pool,
+    savingsSpent: sum(txs.filter((tx) => tx.kind === KIND.EXPENSE && txPaidFrom(tx, settings) === PAID_FROM.SAVINGS)),
     myLeft: pool ? myMoney - mySpent - homeSpent : myMoney - mySpent,
     homeSpent,
     homeLeft: pool ? null : givenHome - homeSpent,

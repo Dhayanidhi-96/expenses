@@ -1,7 +1,9 @@
 import { isValidPaise } from './money.js';
 
 export const KIND = { EXPENSE: 'expense', MONEY_IN: 'moneyIn' };
-export const PAID_FROM = { ME: 'Me', HOME: 'Home money' };
+// Which money paid for an expense. Savings = spent straight from savings (lowers Saved, not the month's money).
+export const PAID_FROM = { ME: 'Me', HOME: 'Home money', SAVINGS: 'Savings' };
+export const PAID_FROM_LIST = [PAID_FROM.ME, PAID_FROM.HOME, PAID_FROM.SAVINGS];
 // 'Taken from Savings' moves money back from savings into My Money; it is a transfer, not income.
 export const MONEY_TYPE = { IN: 'Money In', SAVED: 'Saved', HOME: 'Given to Home', FROM_SAVINGS: 'Taken from Savings' };
 export const MONEY_TYPES = Object.values(MONEY_TYPE);
@@ -69,8 +71,8 @@ export function validateTransaction(tx) {
     if (!value.category) errors.category = 'Pick a category';
     if (!value.paidBy) errors.paidBy = 'Pick how you paid';
     if (tx.paidFrom !== undefined && tx.paidFrom !== null) {
-      if (tx.paidFrom === PAID_FROM.ME || tx.paidFrom === PAID_FROM.HOME) value.paidFrom = tx.paidFrom;
-      else errors.paidFrom = 'Pick Me or Home money';
+      if (PAID_FROM_LIST.includes(tx.paidFrom)) value.paidFrom = tx.paidFrom;
+      else errors.paidFrom = 'Pick Me, Home money or Savings';
     }
   } else if (tx.kind === KIND.MONEY_IN) {
     value.type = tx.type;

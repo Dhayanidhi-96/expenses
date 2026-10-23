@@ -1,7 +1,7 @@
 import { firebaseConfig } from './firebase-config.js';
 import { createStore } from './store.js';
 import { parseAmount, formatINR, paiseToInput } from './money.js';
-import { KIND, MONEY_TYPE, MONEY_TYPES, PAID_FROM, newId, validateTransaction, parseBackup } from './model.js';
+import { KIND, MONEY_TYPE, MONEY_TYPES, PAID_FROM, PAID_FROM_LIST, newId, validateTransaction, parseBackup } from './model.js';
 import {
   todayISO, periodFor, shiftPeriod, addDays, dashboard, filterTransactions, sortTransactions,
   summarize, rangeForPreset, inRange, paidFromFor, txPaidFrom, myBudgetTotal, daysBetween,
@@ -172,7 +172,7 @@ function renderDashboard() {
         ${stat(isCurrent ? 'Safe to spend / day' : 'Left per day', money(d.safePerDay, true), tone(d.safePerDay))}
         ${isCurrent ? stat('Spent today', money(d.spentToday), d.spentToday > d.safePerDay ? 'warn' : '') : ''}
         ${endStat}
-        ${stat('Saved', money(d.netSaved) + (d.fromSavings ? ` <span class="muted small">(${formatINR(d.fromSavings)} taken)</span>` : ''))}
+        ${stat('Saved', money(d.netSaved) + (d.fromSavings || d.savingsSpent ? ` <span class="muted small">(${[d.fromSavings ? `${formatINR(d.fromSavings)} taken` : '', d.savingsSpent ? `${formatINR(d.savingsSpent)} spent from savings` : ''].filter(Boolean).join(', ')})</span>` : ''))}
       </div>
       <p class="muted small hero-foot">${d.pool ? 'My spend: average' : 'Average'} ${money(d.avgPerDay)}/day vs ${d.pool ? 'plan' : 'daily limit'} ${money(d.dailyLimit)}${d.avgPerDay > d.dailyLimit && d.dailyLimit > 0 ? ' <span class="warn">⚠</span>' : ''}</p>
     </section>
@@ -562,7 +562,7 @@ const kpi = (label, value, cls = '', note = '') =>
 function moneyLeftHero(m, subtitle, comparable) {
   const spent = m.pool ? m.mySpent + m.homeSpent : m.mySpent;
   const pct = m.myMoney > 0 ? Math.round((spent / m.myMoney) * 100) : null;
-  const netSaved = m.saved - m.fromSavings;
+  const netSaved = m.saved - m.fromSavings - m.savingsSpent;
   const rate = m.salary > 0 ? `${Math.round((netSaved / m.salary) * 100)}%` : '–';
   return `
     <section class="card hero an-hero">
@@ -570,7 +570,7 @@ function moneyLeftHero(m, subtitle, comparable) {
       <div class="value ${m.myLeft < 0 ? 'bad' : ''}">${money(m.myLeft)}</div>
       ${pct !== null ? `<div class="hero-bar" role="img" aria-label="${pct}% of available money spent"><div class="${m.myLeft < 0 ? 'over' : pct >= 80 ? 'warn' : ''}" style="width:${Math.min(100, pct)}%"></div></div>` : ''}
       <div class="muted small">${pct !== null ? `<strong>${pct}%</strong> of available money spent · ` : ''}Available after savings ${money(m.myMoney)}</div>
-      <p class="small kpi-compare">Salary ${money(m.salary)} · Saved ${money(m.saved)} (${rate})${m.fromSavings ? ` · ${money(m.fromSavings)} taken back` : ''}${m.change !== null && comparable ? ` · My spend ${changeText(m.change, null)} than before` : ''}</p>
+      <p class="small kpi-compare">Salary ${money(m.salary)} · Saved ${money(netSaved)} (${rate})${m.fromSavings ? ` · ${money(m.fromSavings)} taken back` : ''}${m.savingsSpent ? ` · ${money(m.savingsSpent)} spent from savings` : ''}${m.change !== null && comparable ? ` · My spend ${changeText(m.change, null)} than before` : ''}</p>
     </section>`;
 }
 
@@ -953,7 +953,6 @@ function renderEntryView(kind) {
   const lastPaidBy = prefs.get('paidBy');
   const paidBy = tx?.paidBy ?? (s.payModes.includes(lastPaidBy) ? lastPaidBy : s.payModes[0]);
   const paidFrom = tx?.kind === KIND.EXPENSE ? txPaidFrom(tx, s) : PAID_FROM.ME;
-  const homePot = usesHomePot(s, state.data.transactions); // separate home money in use?
   const usesGivenHome = state.data.transactions.some((t) => t.type === MONEY_TYPE.HOME); // older data only
   const chips = (name, options, selected) => options.map((o) => `
     <label class="chip"><input type="radio" name="${name}" value="${esc(o)}" ${o === selected ? 'checked' : ''}><span>${esc(o)}</span></label>`).join('');
@@ -981,8 +980,8 @@ function renderEntryView(kind) {
         </div>
         <fieldset class="chips"><legend>Paid by</legend>${chips('paidBy', s.payModes, paidBy)}</fieldset>
         <div class="field-error" data-error="paidBy"></div>
-        ${homePot || paidFrom === PAID_FROM.HOME ? `<fieldset class="chips"><legend>Paid from</legend>${chips('paidFrom', [PAID_FROM.ME, PAID_FROM.HOME], paidFrom)}</fieldset>
-        <div class="field-error" data-error="paidFrom"></div>` : ''}`
+        <fieldset class="chips"><legend>Paid from</legend>${chips('paidFrom', PAID_FROM_LIST, paidFrom)}</fieldset>
+        <div class="field-error" data-error="paidFrom"></div>`
       : `
         <fieldset class="chips"><legend>Type</legend>${chips('type', MONEY_TYPES.filter((t) => t !== MONEY_TYPE.HOME || usesGivenHome || tx?.type === MONEY_TYPE.HOME), tx?.type ?? MONEY_TYPE.IN)}</fieldset>
         <p class="muted small">Money In = salary/cash received · Saved = put aside${usesGivenHome ? ' · Given to Home = money for home expenses' : ''} · Taken from Savings = money moved back from savings to spend.${usesGivenHome ? '' : ' Money you give home: add it as an expense in the Home category.'}</p>
@@ -1012,13 +1011,7 @@ function renderEntryView(kind) {
   form.addEventListener('submit', (e) => { e.preventDefault(); submitEntry(form, kind, tx); });
   form.querySelector('[data-action="cancel"]')?.addEventListener('click', () => navigate('history'));
   form.querySelector('[data-action="delete"]')?.addEventListener('click', () => deleteEntry(tx));
-  if (isExpense) {
-    bindNewCategory(form);
-    // Picking a category pre-selects its usual pot; the user can still switch it.
-    form.addEventListener('change', (e) => {
-      if (e.target.name === 'category') selectPaidFrom(form, paidFromFor(e.target.value, settings()));
-    });
-  }
+  if (isExpense) bindNewCategory(form);
   refreshRecent(kind);
   if (!tx && matchMedia('(min-width: 720px)').matches) $('#amount').focus();
 }
@@ -1056,7 +1049,6 @@ function bindNewCategory(form) {
       toggle.insertAdjacentHTML('beforebegin',
         `<label class="chip"><input type="radio" name="category" value="${esc(name)}" checked><span>${esc(name)}</span></label>`);
       form.querySelector('[data-error="category"]').textContent = '';
-      selectPaidFrom(form, category.paidFrom);
       setOpen(false);
       toast(`Category "${name}" added`);
     } catch (e) {
@@ -1075,11 +1067,6 @@ function bindNewCategory(form) {
     if (e.key === 'Enter') { e.preventDefault(); saveButton.click(); }
     if (e.key === 'Escape') setOpen(false);
   });
-}
-
-function selectPaidFrom(form, pot) {
-  const radio = [...form.querySelectorAll('input[name="paidFrom"]')].find((r) => r.value === pot);
-  if (radio) radio.checked = true;
 }
 
 async function submitEntry(form, kind, existing) {
@@ -1172,7 +1159,7 @@ function txRow(tx) {
   const isIncome = tx.type === MONEY_TYPE.IN; // Saved / Given to Home are allocations, not income
   const s = settings();
   const sub = isExpense
-    ? [tx.paidBy, txPaidFrom(tx, s) === PAID_FROM.HOME ? 'Home money' : '', tx.note].filter(Boolean).join(' · ')
+    ? [tx.paidBy, txPaidFrom(tx, s) !== PAID_FROM.ME ? txPaidFrom(tx, s) : '', tx.note].filter(Boolean).join(' · ')
     : tx.note;
   return `<li><button type="button" class="tx" data-id="${esc(tx.id)}" aria-label="Edit ${esc(isExpense ? tx.category : tx.type)} ${formatINR(tx.amountPaise)}">
     <span class="avatar ${isIncome ? 'in' : ''}" aria-hidden="true">${esc(initials(isExpense ? tx.category : tx.type))}</span>
@@ -1311,7 +1298,7 @@ function renderSettings() {
         <p class="muted small" style="margin:4px 0 0">Everything marked "Paid from: Home money" counts against this. Leave empty to use the home categories' budgets.</p>
       </div>
       <div>
-        <div class="label-text">Categories · monthly budget (₹) · paid from</div>
+        <div class="label-text">Categories · monthly budget (₹) · pot for old entries</div>
         <div id="cat-rows">${s.categories.map(catRow).join('')}</div>
         <button type="button" class="btn" data-action="add-cat">+ Add category</button>
         <p class="small" id="budget-check" aria-live="polite"></p>
