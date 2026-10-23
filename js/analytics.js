@@ -1,6 +1,6 @@
 // Pure calculations for the Analytics tab. Builds on calc.js so numbers match the Dashboard.
 import { KIND, PAID_FROM, MONEY_TYPE } from './model.js';
-import { periodFor, shiftPeriod, addDays, daysBetween, inRange, paidFromFor, txPaidFrom, dashboard, budgetStatus, PACE_MIN_DAYS } from './calc.js';
+import { periodFor, shiftPeriod, addDays, daysBetween, inRange, paidFromFor, txPaidFrom, dashboard, budgetStatus, categoryBudget, inHomeLimit, PACE_MIN_DAYS } from './calc.js';
 
 export const RANGE_PRESETS = [
   ['period', 'This period'], ['last-period', 'Last period'], ['3p', 'Last 3 periods'],
@@ -140,6 +140,7 @@ export function budgetReview(transactions, settings, today, count = 6) {
   for (const c of settings.categories) {
     const spent = periods.map((p) => sum(transactions.filter((tx) => tx.kind === KIND.EXPENSE && tx.category === c.name && inRange(tx.date, p))));
     const avg = spent.reduce((a, b) => a + b, 0) / periods.length;
+    if (inHomeLimit(c, settings)) continue; // covered by the one home limit, no per-category advice
     const budget = c.budgetPaise;
     if (!budget && !avg) continue;
     let suggestion = { type: 'ok' };
@@ -241,15 +242,16 @@ export function categoryBudgetRows(analysis, settings, scope) {
   const periods = analysis.range.periods ? Math.max(1, Math.min(analysis.range.periods, analysis.periodsWithData)) : null;
   const rows = analysis.categories.map((c) => ({ name: c.name, paidFrom: c.paidFrom, spent: c.spent, share: c.share, change: c.change }));
   for (const c of settings.categories) {
-    if (c.budgetPaise > 0 && !rows.some((r) => r.name === c.name) && (scope === 'all' || (scope === 'me') === (c.paidFrom === PAID_FROM.ME))) {
+    if (categoryBudget(c, settings) > 0 && !rows.some((r) => r.name === c.name) && (scope === 'all' || (scope === 'me') === (c.paidFrom === PAID_FROM.ME))) {
       rows.push({ name: c.name, paidFrom: c.paidFrom, spent: 0, share: 0, change: null, unused: true });
     }
   }
   return rows.map((r) => {
     const found = settings.categories.find((c) => c.name === r.name);
-    const budget = periods && found ? found.budgetPaise * periods : null;
+    const budget = periods && found && categoryBudget(found, settings) > 0 ? categoryBudget(found, settings) * periods : null;
     return {
       ...r,
+      inHomeLimit: !!found && inHomeLimit(found, settings),
       budget,
       left: budget === null ? null : budget - r.spent,
       ratio: budget ? r.spent / budget : null,

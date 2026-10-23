@@ -138,11 +138,15 @@ export function budgetStatus(spent, budget, warnPercent) {
 }
 
 /** Per-category budget rows. Categories no longer in Settings still appear so totals reconcile. */
+/** With a home spend limit set, home categories have no budget of their own: the one limit covers them all. */
+export const inHomeLimit = (category, settings) => settings.homeLimitPaise > 0 && category.paidFrom === PAID_FROM.HOME;
+export const categoryBudget = (category, settings) => (inHomeLimit(category, settings) ? 0 : category.budgetPaise);
+
 export function categoryBreakdown(expenses, settings) {
   const spentBy = new Map();
   for (const tx of expenses) spentBy.set(tx.category, (spentBy.get(tx.category) ?? 0) + tx.amountPaise);
 
-  const rows = settings.categories.map((c) => ({ name: c.name, budget: c.budgetPaise, paidFrom: c.paidFrom }));
+  const rows = settings.categories.map((c) => ({ name: c.name, budget: categoryBudget(c, settings), paidFrom: c.paidFrom, inHomeLimit: inHomeLimit(c, settings) }));
   for (const name of spentBy.keys()) {
     if (!rows.some((r) => r.name === name)) rows.push({ name, budget: 0, paidFrom: PAID_FROM.ME, removed: true });
   }

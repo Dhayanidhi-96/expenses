@@ -294,7 +294,7 @@ function categoryRow(c, total, note = '') {
     <div class="cat">
       <div class="row between wrap">
         <div><strong>${esc(c.name)}</strong> ${c.paidFrom === PAID_FROM.HOME ? '<span class="tag">Home</span>' : ''}${c.removed ? ' <span class="tag">Removed</span>' : ''}</div>
-        <div class="small">${STATUS[c.status](c)}</div>
+        <div class="small">${c.inHomeLimit ? '<span class="muted">Part of home limit</span>' : STATUS[c.status](c)}</div>
       </div>
       ${c.budget ? `<div class="track" role="img" aria-label="${Math.round(c.ratio * 100)}% of budget used"><div class="fill ${c.status}" style="width:${pct}%"></div></div>` : ''}
       <div class="row between small">
